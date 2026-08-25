@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-lab_dir="$(cd "$(dirname "$0")" && pwd -P)"
+script_path="$0"
+if [[ -L "$script_path" ]]; then
+  script_path="$(readlink "$script_path")"
+fi
+lab_dir="$(cd "$(dirname "$script_path")" && pwd -P)"
 
 run_home_command() {
   if [[ -t 0 && -t 1 ]]; then
