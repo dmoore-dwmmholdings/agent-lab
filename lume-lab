@@ -48,10 +48,18 @@ launch_agent() {
   echo "[agent-lab] waiting for macOS Remote Login..."
   wait_for_ssh
   echo "[agent-lab] preparing $agent and Framewatch inside the macOS VM..."
+  if ! lume ssh "$vm_name" 'command -v brew >/dev/null 2>&1'; then
+    lume ssh "$vm_name" 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+  fi
+  lume ssh "$vm_name" '/opt/homebrew/bin/brew install node rust'
+  lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g firebase-tools@15 pnpm'
+  lume ssh "$vm_name" 'command -v framewatch >/dev/null 2>&1 || /opt/homebrew/bin/cargo install --locked framewatch --features macos'
   if [[ "$agent" == codex ]]; then
-    lume ssh "$vm_name" "command -v brew >/dev/null || NONINTERACTIVE=1 /bin/bash -c '\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'; eval \"\$(/opt/homebrew/bin/brew shellenv)\"; brew list node >/dev/null 2>&1 || brew install node; npm install -g @openai/codex firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec codex --dangerously-bypass-approvals-and-sandbox"
+    lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g @openai/codex'
+    lume ssh "$vm_name" "cd '$guest_dir' && exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
   else
-    lume ssh "$vm_name" "command -v brew >/dev/null || NONINTERACTIVE=1 /bin/bash -c '\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'; eval \"\$(/opt/homebrew/bin/brew shellenv)\"; brew list node >/dev/null 2>&1 || brew install node; npm install -g @anthropic-ai/claude-code firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec claude --dangerously-skip-permissions"
+    lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g @anthropic-ai/claude-code'
+    lume ssh "$vm_name" "cd '$guest_dir' && exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
   fi
 }
 
