@@ -95,6 +95,10 @@ case "${1:-}" in
     shift
     export AGENT_LAB_GUI=1
     ;;
+  lume)
+    shift
+    exec "${lab_dir}/lume-lab" codex "$@"
+    ;;
   -h|--help|help|"")
     echo "Usage: codex-lab /absolute/path/to/project"
     echo "       codex-lab login"
@@ -102,6 +106,7 @@ case "${1:-}" in
     echo "       codex-lab github <login|setup-git|status|logout>"
     echo "       codex-lab gcloud <login|firestore-login|status>"
     echo "       codex-lab gui /absolute/path/to/project"
+    echo "       codex-lab lume /absolute/path/to/project"
     exit 0
     ;;
 esac

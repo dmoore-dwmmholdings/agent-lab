@@ -68,16 +68,17 @@ For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
 Lume path on Apple Silicon Macs:
 
 ```bash
-brew install lume
-lume-lab create       # one-time: downloads macOS and creates a 100 GB VM
-lume-lab run /absolute/path/to/project
+codex-lab lume /absolute/path/to/project
+# or: claude-lab lume .
 ```
 
 Lume runs a real local macOS VM through Apple's Virtualization framework; it is
-not a Linux Docker container. The project is shared explicitly with that VM.
-Use it when macOS fidelity matters, and install/run the macOS build of
-Framewatch inside the guest so it captures guest windows. The default guest
-account has a documented initial password, so change it before sensitive work.
+not a Linux Docker container. On first invocation Agent Lab creates the 100 GB
+logical-disk VM, shares only the invoked project, bootstraps the chosen agent,
+Firebase tooling, and Framewatch's macOS backend, then starts the agent in that
+shared project. Complete the selected agent's one-time login inside the guest;
+it remains inside that VM. Install Homebrew once in the guest if prompted, then
+repeat the same command. Change the default guest password before sensitive work.
 
 | Path | Best for | Tradeoff |
 | --- | --- | --- |

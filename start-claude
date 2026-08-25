@@ -59,12 +59,17 @@ case "${1:-}" in
     shift
     export AGENT_LAB_GUI=1
     ;;
+  lume)
+    shift
+    exec "${lab_dir}/lume-lab" claude "$@"
+    ;;
   -h|--help|help|"")
     echo "Usage: claude-lab /absolute/path/to/project"
     echo "       claude-lab <login|status|logout>"
     echo "       claude-lab github <login|setup-git|status|logout>"
     echo "       claude-lab gcloud <login|firestore-login|status>"
     echo "       claude-lab gui /absolute/path/to/project"
+    echo "       claude-lab lume /absolute/path/to/project"
     exit 0
     ;;
 esac
