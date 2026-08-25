@@ -52,15 +52,15 @@ launch_agent() {
   if ! lume ssh "$vm_name" 'test -x /opt/homebrew/bin/brew'; then
     lume ssh "$vm_name" "printf '#!/bin/sh\\necho %s\\n' '$vm_password' >/tmp/agent-lab-askpass && chmod 700 /tmp/agent-lab-askpass && SUDO_ASKPASS=/tmp/agent-lab-askpass NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"; rc=\$?; rm -f /tmp/agent-lab-askpass; exit \$rc"
   fi
-  lume ssh "$vm_name" '/opt/homebrew/bin/brew install node rust'
-  lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g firebase-tools@15 pnpm'
-  lume ssh "$vm_name" 'command -v framewatch >/dev/null 2>&1 || /opt/homebrew/bin/cargo install --locked framewatch --features macos'
+  lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/brew install node rust'
+  lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g firebase-tools@15 pnpm'
+  lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH command -v framewatch >/dev/null 2>&1 || PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/cargo install --locked framewatch --features macos'
   if [[ "$agent" == codex ]]; then
-    lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g @openai/codex'
-    lume ssh "$vm_name" "cd '$guest_dir' && exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
+    lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @openai/codex'
+    lume ssh "$vm_name" "cd '$guest_dir' && PATH=/opt/homebrew/bin:\$PATH exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
   else
-    lume ssh "$vm_name" '/opt/homebrew/bin/npm install -g @anthropic-ai/claude-code'
-    lume ssh "$vm_name" "cd '$guest_dir' && exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
+    lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @anthropic-ai/claude-code'
+    lume ssh "$vm_name" "cd '$guest_dir' && PATH=/opt/homebrew/bin:\$PATH exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
   fi
 }
 
