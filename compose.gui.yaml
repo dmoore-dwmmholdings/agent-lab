@@ -2,6 +2,9 @@ name: agent-lab-gui
 
 services:
   project:
+    build:
+      args:
+        INSTALL_FRAMEWATCH: "1"
     init: true
     working_dir: ${WORKSPACE_DIR:-/workspace/project}
     ports: ["6080:6080"]

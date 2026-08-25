@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -22,6 +22,9 @@ if (existsSync(manifestPath)) {
 
 const environment = { ...process.env, ...(manifest.environment ?? {}) };
 environment.PATH = `${environment.HOME}/.cargo/bin:${environment.PATH}`;
+const executableTempDir = join(environment.HOME, ".agent-lab-tmp");
+mkdirSync(executableTempDir, { recursive: true });
+environment.TMPDIR = executableTempDir;
 
 function run(command, label) {
   console.log(`\n[agent-lab] ${label}: ${command}`);
