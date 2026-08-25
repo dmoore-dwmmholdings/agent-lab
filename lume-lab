@@ -3,7 +3,7 @@ set -euo pipefail
 
 vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos-cua}"
 vm_password="${AGENT_LAB_LUME_PASSWORD:-lume}"
-framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.3}"
+framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.5}"
 if ! command -v lume >/dev/null 2>&1; then
   echo "Lume is required. Install it with: brew install lume" >&2
   exit 1
