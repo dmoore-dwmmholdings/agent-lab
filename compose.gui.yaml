@@ -1,13 +1,22 @@
-name: agent-lab-gui
-
+# GUI overlay, layered on top of either base file. It deliberately does not set
+# a top-level `name:`; the launcher supplies a distinct `-p` project name so the
+# GUI image never collides with the headless image or with the other agent.
 services:
   project:
+    user: "0:0"
+    cap_add:
+      - SETUID
+      - SETGID
     build:
       args:
         INSTALL_FRAMEWATCH: "1"
     init: true
     working_dir: ${WORKSPACE_DIR:-/workspace/project}
-    ports: ["6080:6080"]
+    # Loopback only. x11vnc runs without a password, so publishing this on all
+    # interfaces would hand any host on the network an interactive desktop
+    # sitting next to an agent that runs with approvals bypassed.
+    ports:
+      - "${AGENT_LAB_GUI_BIND:-127.0.0.1}:6080:6080"
     environment:
       DISPLAY: :99
       AGENT_LAB_SCREEN: ${AGENT_LAB_SCREEN:-1920x1080x24}
