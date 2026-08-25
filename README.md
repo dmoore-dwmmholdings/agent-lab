@@ -86,6 +86,9 @@ For a guest whose password differs from Lume's initial `lume` password, set
 The harness waits for Remote Login before provisioning. If a first boot takes
 longer than three minutes, it prints the exact `lume setup` recovery command.
 
+Agent Lab pins Framewatch to version `0.8.3`. Override that temporary default
+with `AGENT_LAB_FRAMEWATCH_VERSION=<version>` when needed.
+
 | Path | Best for | Tradeoff |
 | --- | --- | --- |
 | `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |

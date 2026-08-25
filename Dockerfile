@@ -1,8 +1,9 @@
 FROM node:22-bookworm-slim
+ARG FRAMEWATCH_VERSION=0.8.3
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       bash ca-certificates cargo curl dbus-x11 ffmpeg fluxbox git gnupg \
+       bash build-essential ca-certificates curl dbus-x11 ffmpeg fluxbox git gnupg \
        libgomp1 libx11-dev openssh-client pkg-config ripgrep tar x11-apps \
        x11vnc x11-xserver-utils xvfb novnc websockify \
     && install -d -m 755 /etc/apt/keyrings \
@@ -33,7 +34,9 @@ RUN apt-get update \
     && ln -s /opt/java/openjdk-21/bin/jar /usr/local/bin/jar \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global @openai/codex firebase-tools@15 pnpm \
-    && cargo install --locked framewatch --features linux-x11
+    && curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal \
+    && /root/.cargo/bin/cargo install --locked framewatch --version "$FRAMEWATCH_VERSION" --features linux-x11 \
+    && ln -s /root/.cargo/bin/framewatch /usr/local/bin/framewatch
 
 RUN useradd --create-home --shell /bin/bash codex
 COPY lab-entrypoint.mjs /usr/local/bin/agent-lab-entrypoint.mjs
