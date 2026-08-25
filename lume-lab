@@ -18,11 +18,35 @@ guest_project() {
   basename "$1"
 }
 
+wait_for_ssh() {
+  local attempt
+  for attempt in $(seq 1 90); do
+    if lume ssh "$vm_name" 'true' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  cat >&2 <<EOF
+[agent-lab] The macOS VM booted, but SSH/Remote Login did not become ready.
+Open its native window, wait for macOS setup to finish, then run:
+  lume setup $vm_name --unattended tahoe
+  lume stop $vm_name
+  codex-lab lume <your-project>
+EOF
+  return 1
+}
+
 launch_agent() {
   local agent="$1" project="$2" guest_dir
   guest_dir="/Volumes/My Shared Files/$(guest_project "$project")"
   ensure_vm
+  if lume ls | awk -v vm="$vm_name" '$1 == vm && $7 == "running" { found=1 } END { exit !found }'; then
+    echo "[agent-lab] restarting its macOS VM to attach the selected project..."
+    lume stop "$vm_name" >/dev/null
+  fi
   lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard --detach >/dev/null
+  echo "[agent-lab] waiting for macOS Remote Login..."
+  wait_for_ssh
   echo "[agent-lab] preparing $agent and Framewatch inside the macOS VM..."
   if [[ "$agent" == codex ]]; then
     lume ssh "$vm_name" "command -v brew >/dev/null || { echo 'Install Homebrew in the guest, then rerun codex-lab lume.' >&2; exit 1; }; brew list node >/dev/null 2>&1 || brew install node; npm install -g @openai/codex firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec codex --dangerously-bypass-approvals-and-sandbox"

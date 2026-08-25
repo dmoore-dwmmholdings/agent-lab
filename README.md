@@ -81,6 +81,9 @@ shared project. Complete the selected agent's one-time login inside the guest;
 it remains inside that VM. Install Homebrew once in the guest if prompted, then
 repeat the same command. Change the default guest password before sensitive work.
 
+The harness waits for Remote Login before provisioning. If a first boot takes
+longer than three minutes, it prints the exact `lume setup` recovery command.
+
 | Path | Best for | Tradeoff |
 | --- | --- | --- |
 | `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
