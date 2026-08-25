@@ -80,6 +80,8 @@ Firebase tooling, and Framewatch's macOS backend, then starts the agent in that
 shared project. Complete the selected agent's one-time login inside the guest;
 it remains inside that VM. Install Homebrew once in the guest if prompted, then
 repeat the same command. Change the default guest password before sensitive work.
+For a guest whose password differs from Lume's initial `lume` password, set
+`AGENT_LAB_LUME_PASSWORD` before launching.
 
 The harness waits for Remote Login before provisioning. If a first boot takes
 longer than three minutes, it prints the exact `lume setup` recovery command.
