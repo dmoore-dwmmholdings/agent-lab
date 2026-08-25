@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos}"
+vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos-cua}"
 if ! command -v lume >/dev/null 2>&1; then
   echo "Lume is required. Install it with: brew install lume" >&2
   exit 1
@@ -10,7 +10,7 @@ fi
 ensure_vm() {
   if ! lume ls | awk 'NR>1 {print $1}' | grep -qx "$vm_name"; then
     echo "[agent-lab] creating macOS VM $vm_name (one-time download and 100 GB logical disk)..."
-    lume create "$vm_name" --os macOS --ipsw latest --unattended tahoe --cpu 4 --memory 8GB --disk-size 100GB --display 1920x1080
+    lume pull macos-tahoe-cua:26.5.2 "$vm_name"
   fi
 }
 
@@ -49,15 +49,15 @@ launch_agent() {
   wait_for_ssh
   echo "[agent-lab] preparing $agent and Framewatch inside the macOS VM..."
   if [[ "$agent" == codex ]]; then
-    lume ssh "$vm_name" "command -v brew >/dev/null || { echo 'Install Homebrew in the guest, then rerun codex-lab lume.' >&2; exit 1; }; brew list node >/dev/null 2>&1 || brew install node; npm install -g @openai/codex firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec codex --dangerously-bypass-approvals-and-sandbox"
+    lume ssh "$vm_name" "command -v brew >/dev/null || NONINTERACTIVE=1 /bin/bash -c '\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'; eval \"\$(/opt/homebrew/bin/brew shellenv)\"; brew list node >/dev/null 2>&1 || brew install node; npm install -g @openai/codex firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec codex --dangerously-bypass-approvals-and-sandbox"
   else
-    lume ssh "$vm_name" "command -v brew >/dev/null || { echo 'Install Homebrew in the guest, then rerun claude-lab lume.' >&2; exit 1; }; brew list node >/dev/null 2>&1 || brew install node; npm install -g @anthropic-ai/claude-code firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec claude --dangerously-skip-permissions"
+    lume ssh "$vm_name" "command -v brew >/dev/null || NONINTERACTIVE=1 /bin/bash -c '\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'; eval \"\$(/opt/homebrew/bin/brew shellenv)\"; brew list node >/dev/null 2>&1 || brew install node; npm install -g @anthropic-ai/claude-code firebase-tools@15 pnpm; command -v framewatch >/dev/null || { brew list rust >/dev/null 2>&1 || brew install rust; cargo install --locked framewatch --features macos; }; cd '$guest_dir'; exec claude --dangerously-skip-permissions"
   fi
 }
 
 case "${1:-}" in
   create)
-    lume create "$vm_name" --os macOS --ipsw latest --unattended tahoe --cpu 4 --memory 8GB --disk-size 100GB --display 1920x1080
+    ensure_vm
     ;;
   run)
     shift
