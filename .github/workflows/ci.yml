@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: shellcheck -x install.sh lab-common.sh gui-entrypoint.sh lume-lab start-codex start-claude
+
+      - name: Node syntax
+        run: node --check lab-entrypoint.mjs
+
+      - name: JSON examples parse
+        run: |
+          for f in agent-lab.example.json agent-lab.rust.example.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))"
+          done
+
+      - name: Compose files resolve
+        env:
+          PROJECT_DIR: /tmp
+        run: |
+          set -eux
+          docker compose -p codex-lab      -f compose.yaml        -f compose.credentials.yaml                            config >/dev/null
+          docker compose -p codex-lab-gui  -f compose.yaml        -f compose.credentials.yaml -f compose.gui.yaml        config >/dev/null
+          docker compose -p claude-lab     -f claude-compose.yaml -f compose.credentials.yaml                            config >/dev/null
+          docker compose -p claude-lab-gui -f claude-compose.yaml -f compose.credentials.yaml -f compose.gui.yaml        config >/dev/null
+          docker compose -p codex-lab      -f compose.yaml                                                               config >/dev/null
+
+      - name: GUI overlay must not pin a project name
+        run: |
+          set -eu
+          # A top-level `name:` in the overlay wins over the base file and made
+          # both GUI flavours build into one shared image tag.
+          ! grep -Eq '^name:' compose.gui.yaml
+
+      - name: Resolved project name follows -p
+        env:
+          PROJECT_DIR: /tmp
+        run: |
+          set -eu
+          for p in codex-lab-gui claude-lab-gui; do
+            case "$p" in
+              codex-*) base=compose.yaml ;;
+              *)       base=claude-compose.yaml ;;
+            esac
+            got=$(docker compose -p "$p" -f "$base" -f compose.credentials.yaml -f compose.gui.yaml config --format json | node -e "
+              let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).name))")
+            test "$got" = "$p" || { echo "expected $p, got $got" >&2; exit 1; }
+          done

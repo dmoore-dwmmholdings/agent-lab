@@ -16,7 +16,10 @@ explicitly mount.
 
 The installer creates Docker-only named volumes for the Codex login, Claude
 login, GitHub credentials, and Google Cloud credentials. It then installs
-`codex-lab` and `claude-lab` symlinks in `~/.local/bin`.
+`codex-lab`, `claude-lab`, and `lume-lab` symlinks in `~/.local/bin`.
+
+Images are built automatically the first time each lab is used. Pass
+`./install.sh --build` to build both up front instead.
 
 If `~/.local/bin` is not already on your shell PATH, add this to `~/.zshrc`:
 
@@ -35,78 +38,45 @@ codex-lab gcloud firestore-login
 claude-lab login
 ```
 
-Claude Code currently requires one additional first-interactive-launch choice:
-run `claude-lab .`, select the subscription option, and complete the login in
-that same session. Later launches reuse its Docker-only profile.
-
 The named volumes intentionally are not in Git. Logins and any tokens stay on
 the particular machine where you complete them.
 
 ## Use
 
-## GUI paths
-
-### Default: Linux desktop inside Docker
-
-Use the Docker GUI path for web apps, Linux desktop apps, Electron apps that
-support Linux, and automated visual checks:
-
-```bash
-codex-lab gui /absolute/path/to/project
-# or: claude-lab gui .
-```
-
-Then open http://localhost:6080/vnc.html in a Mac browser. The project is still
-the only host folder mounted into the container. This image provides X11,
-Framewatch's `linux-x11` backend, and `framewatch` on PATH. An agent can use
-`framewatch windows` and `framewatch shot` against apps it starts in that
-desktop. This is the recommended default because it is much faster and uses the
-same Docker isolation as normal Agent Lab sessions.
-
-### Native macOS: Lume VM
-
-For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
-Lume path on Apple Silicon Macs:
-
-```bash
-codex-lab lume /absolute/path/to/project
-# or: claude-lab lume .
-```
-
-Lume runs a real local macOS VM through Apple's Virtualization framework; it is
-not a Linux Docker container. On first invocation Agent Lab creates the 100 GB
-logical-disk VM, shares only the invoked project, bootstraps the chosen agent,
-Firebase tooling, and Framewatch's macOS backend, then starts the agent in that
-shared project. Complete the selected agent's one-time login inside the guest;
-it remains inside that VM. Install Homebrew once in the guest if prompted, then
-repeat the same command. Change the default guest password before sensitive work.
-For a guest whose password differs from Lume's initial `lume` password, set
-`AGENT_LAB_LUME_PASSWORD` before launching.
-
-The harness waits for Remote Login before provisioning. If a first boot takes
-longer than three minutes, it prints the exact `lume setup` recovery command.
-
-Agent Lab pins Framewatch to version `0.8.5`. Override that temporary default
-with `AGENT_LAB_FRAMEWATCH_VERSION=<version>` when needed.
-
-| Path | Best for | Tradeoff |
-| --- | --- | --- |
-| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
-| `lume-lab` | Xcode and native macOS Framewatch | First VM download/setup is large and slower |
-
-Start Codex in a Docker container that can only modify the project directory
-you select:
+Start an agent in a container that can only modify the project directory you
+select:
 
 ```bash
 codex-lab /absolute/path/to/project
+# or
+claude-lab /absolute/path/to/project
 ```
 
-Run that in one terminal pane per project. The first run may take a moment to
-build the image.
+Run that in one terminal pane per project. Inside the container, the project
+appears as `/workspace/<project-name>`. You can safely start from the current
+directory with `codex-lab .` or `claude-lab .`; the launcher resolves `.`
+before choosing the project name.
 
-Inside the container, the project appears as `/workspace/<project-name>`. You
-can safely start from the current directory with `codex-lab .` or `claude-lab .`;
-the launcher resolves `.` before choosing the project name.
+For a multi-repository task, invoke the lab on the explicit common parent
+directory; that parent and its children become the isolated workspace, while
+the rest of your Mac remains unavailable to the agent.
+
+## Keeping images current
+
+Nothing rebuilds an image on its own. After pulling changes to this repository,
+or to pick up a new agent release or Framewatch version, rebuild explicitly:
+
+```bash
+codex-lab build          # headless image
+codex-lab build --gui    # GUI image
+claude-lab build
+```
+
+`build` pulls a fresh base image by default; add `--no-pull` to skip that.
+
+Each agent and flavour has its own image (`codex-lab-project`,
+`codex-lab-gui-project`, `claude-lab-project`, `claude-lab-gui-project`), and
+they share the expensive base layers, so the second build of a pair is fast.
 
 ## Per-project setup
 
@@ -135,6 +105,16 @@ For Rust, select a toolchain and prefetch dependencies:
 The Rust toolchain is cached in the agent's Docker-only profile. More examples
 are included in `agent-lab.example.json` and `agent-lab.rust.example.json`.
 
+A manifest is executable code, so the first time a lab sees a particular
+`.agent-lab.json` it prints the commands and asks for approval. Approving
+remembers that exact file by hash; editing it asks again. Declining starts the
+agent with the manifest ignored entirely. Set `AGENT_LAB_TRUST_MANIFEST=1` to
+approve without prompting, for unattended use.
+
+`environment` cannot override the variables Agent Lab uses to wire up the
+container: `HOME`, `PATH`, `TMPDIR`, `NPM_CONFIG_PREFIX`, and the GitHub and
+Google Cloud credential paths.
+
 ### Shared developer base
 
 Every lab starts with Node.js 22, pnpm, Firebase CLI 15, JDK 21, Git/GitHub
@@ -150,10 +130,7 @@ Use the manifest only for repository-specific, repeatable setup—for example:
 }
 ```
 
-Never put private registry credentials or tokens in the manifest. For a
-multi-repository task, invoke the lab on the explicit common parent directory;
-that parent and its children become the isolated workspace, while the rest of
-your Mac remains unavailable to the agent.
+Never put private registry credentials or tokens in the manifest.
 
 Both agents receive built-in guidance on authoring this file. Start a lab once,
 ask the agent to inspect the repository and prepare `.agent-lab.json`, then
@@ -197,13 +174,15 @@ codex-lab github login
 ```
 
 Open the displayed URL on your Mac and complete the sign-in. The resulting
-GitHub credentials are stored only in Docker's `codex-lab-home` volume, shared
-by all lab sessions. Afterward, agents can pull and push over HTTPS. Check or
+GitHub credentials are stored only in Docker's `agent-lab-github` volume,
+shared by both labs. Afterward, agents can pull and push over HTTPS. Check or
 revoke this login with `codex-lab github status` or `codex-lab github logout`.
 The login command also configures Git to use GitHub CLI as its credential
 helper and transparently maps GitHub SSH remote URLs to HTTPS. If you
 authenticated before this setup was added, run `codex-lab github setup-git`
 once.
+
+`claude-lab github ...` operates on the same shared login.
 
 ## Claude Code
 
@@ -213,9 +192,9 @@ Claude uses the same project manifest and shared Docker-only GitHub profile:
 claude-lab /absolute/path/to/project
 ```
 
-Authenticate Claude itself once with `claude-lab login`. This is separate from
-GitHub authentication. Use `claude-lab github status` to inspect the shared
-GitHub login or `claude-lab github login` to replace it.
+Authenticate Claude itself once with `claude-lab login`, and inspect or clear it
+with `claude-lab status` / `claude-lab logout`. This is separate from GitHub
+authentication.
 
 ## Google Cloud and Firestore
 
@@ -236,12 +215,99 @@ Both commands are headless: open the printed Google URL in your normal browser,
 then paste the authorization code back into the terminal. Claude Lab uses the
 same login, and exposes the identical commands through `claude-lab gcloud ...`.
 
+## GUI paths
+
+### Default: Linux desktop inside Docker
+
+Use the Docker GUI path for web apps, Linux desktop apps, Electron apps that
+support Linux, and automated visual checks:
+
+```bash
+codex-lab gui /absolute/path/to/project
+# or: claude-lab gui .
+```
+
+Then open http://localhost:6080/vnc.html in a Mac browser. The project is still
+the only host folder mounted into the container. This image provides X11,
+Framewatch's `linux-x11` backend, and `framewatch` on PATH. An agent can use
+`framewatch windows` and `framewatch shot` against apps it starts in that
+desktop. This is the recommended default because it is much faster and uses the
+same Docker isolation as normal Agent Lab sessions.
+
+The desktop is published on `127.0.0.1` only, because the VNC server runs
+without a password. Override with `AGENT_LAB_GUI_BIND` only on a network you
+control.
+
+### Native macOS: Lume VM
+
+For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
+Lume path on Apple Silicon Macs:
+
+```bash
+codex-lab lume /absolute/path/to/project
+# or: claude-lab lume .
+```
+
+Lume runs a real local macOS VM through Apple's Virtualization framework; it is
+not a Linux Docker container. On first invocation Agent Lab creates the VM,
+shares only the invoked project, bootstraps the chosen agent, Firebase tooling,
+and Framewatch's macOS backend, then starts the agent in that shared project.
+Every provisioning step is skipped on later launches once it is already
+present, so a repeat launch is quick.
+
+The agent opens in the VM's own Terminal window rather than over SSH, because a
+full-screen TUI needs a real controlling terminal. Interact with it in the VM's
+native display. Complete the selected agent's one-time login inside the guest;
+it remains inside that VM.
+
+The harness waits for Remote Login before provisioning. If a first boot takes
+longer than three minutes, it prints the exact `lume setup` recovery command.
+
+Change the default guest password before sensitive work, and set
+`AGENT_LAB_LUME_PASSWORD` so the launcher can still reach the guest. That
+password is passed to `lume ssh` and is briefly readable inside the guest while
+Homebrew is installed, so treat it as a throwaway rather than a reused secret.
+
+Agent Lab pins Framewatch to version `0.8.5`. Override that default with
+`AGENT_LAB_FRAMEWATCH_VERSION=<version>` when needed.
+
+| Path | Best for | Tradeoff |
+| --- | --- | --- |
+| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
+| `codex-lab lume` / `claude-lab lume` | Xcode and native macOS Framewatch | First VM download/setup is large and slower |
+
 ## Security boundary
 
-Codex runs with unrestricted in-container permissions, but the container is
-unprivileged and has no access to the host home directory, SSH agent, Docker
+Agents run with unrestricted in-container permissions, but the container is
+unprivileged, drops all capabilities, sets `no-new-privileges`, caps its
+process count, and has no access to the host home directory, SSH agent, Docker
 socket, or any project directory other than the chosen one.
 
+What the container *does* have is your shared GitHub token and Google Cloud
+credentials, mounted at `/github` and `/gcloud`. Anything that runs inside a
+session can read them, which includes the project's own `.agent-lab.json` setup
+commands and anything the agent is talked into running. The manifest approval
+prompt exists for exactly this reason.
+
+For a repository you do not trust, leave the credentials out entirely:
+
+```bash
+AGENT_LAB_NO_CREDENTIALS=1 codex-lab /path/to/untrusted-repo
+```
+
 This uses a host-mounted workspace for convenient editing. For code that may be
-actively hostile, use a Docker-managed workspace volume and exchange changes
-through Git instead; that prevents the container from seeing host files at all.
+actively hostile, also prefer a Docker-managed workspace volume and exchange
+changes through Git; that prevents the container from seeing host files at all.
+
+### Environment reference
+
+| Variable | Effect |
+| --- | --- |
+| `AGENT_LAB_NO_CREDENTIALS=1` | Do not mount the shared GitHub/Google Cloud volumes |
+| `AGENT_LAB_TRUST_MANIFEST=1` | Approve `.agent-lab.json` without prompting |
+| `AGENT_LAB_PIDS_LIMIT=<n>` | Container process cap (default 4096) |
+| `AGENT_LAB_GUI_BIND=<ip>` | Host interface for the noVNC port (default `127.0.0.1`) |
+| `AGENT_LAB_SCREEN=<WxHxD>` | Virtual screen geometry (default `1920x1080x24`) |
+| `AGENT_LAB_LUME_VM=<name>` | Lume VM name |
+| `AGENT_LAB_LUME_PASSWORD=<pw>` | Guest password for `lume ssh` |
+| `AGENT_LAB_FRAMEWATCH_VERSION=<v>` | Framewatch version to install |

@@ -10,6 +10,19 @@ only for repository-specific, idempotent work such as `pnpm install
 --frozen-lockfile`, `npm ci`, or `cargo fetch`; never put credentials, tokens,
 private registry settings, or absolute host paths in this file.
 
+The first time a lab sees a given `.agent-lab.json` it shows the commands and
+asks the user to approve them, because those commands run with the shared
+GitHub and Google Cloud credentials mounted. Editing the file asks again, so
+keep setup minimal and explainable.
+
+Agents run unprivileged and cannot write to the global npm prefix. `npm install
+-g` works because `NPM_CONFIG_PREFIX` points at a writable directory in the
+agent's own home; prefer project-local dependencies regardless.
+
+`environment` cannot override `HOME`, `PATH`, `TMPDIR`, `NPM_CONFIG_PREFIX`, or
+the GitHub and Google Cloud credential paths. Agent Lab rejects a manifest that
+tries.
+
 When the user asks you to prepare this project for Agent Lab:
 
 1. Inspect the repository's package manager files, lockfiles, toolchain files,

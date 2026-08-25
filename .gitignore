@@ -3,7 +3,6 @@
 # Local machine and editor clutter
 .env
 .env.*
-!.env.example
 .idea/
 .vscode/
 *.swp
