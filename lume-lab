@@ -1,29 +1,61 @@
 #!/usr/bin/env bash
+# Native macOS path: run an agent inside a local Lume VM instead of a container.
+# Use this only when the work genuinely needs macOS (Xcode, Apple frameworks,
+# capturing real macOS windows). The Docker GUI path is faster for everything else.
 set -euo pipefail
 
 vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos-cua}"
+vm_image="${AGENT_LAB_LUME_IMAGE:-macos-tahoe-cua:26.5.2}"
+vm_user="${AGENT_LAB_LUME_USER:-lume}"
 vm_password="${AGENT_LAB_LUME_PASSWORD:-lume}"
 framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.5}"
+brew_bin=/opt/homebrew/bin
+
 if ! command -v lume >/dev/null 2>&1; then
   echo "Lume is required. Install it with: brew install lume" >&2
   exit 1
 fi
 
+# Single-quote a value for safe interpolation into a remote shell command.
+quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# `lume ssh` defaults to a 60 second command timeout and to the built-in `lume`
+# credentials. Provisioning and the interactive agent session both run far past
+# a minute, and the password must be forwarded or a guest whose password was
+# changed (as the README advises) cannot be reached at all.
+guest_run() {
+  local timeout="$1"
+  shift
+  lume ssh "$vm_name" \
+    --user "$vm_user" \
+    --password "$vm_password" \
+    --timeout "$timeout" \
+    "$@"
+}
+
+guest_quick() { guest_run 60 "$@"; }
+guest_long() { guest_run 0 "$@"; }
+
+# `lume get` prints an error but still exits 0 for an unknown VM, so existence
+# has to be decided from the payload rather than the status code.
+vm_exists() {
+  lume get "$vm_name" --format json 2>/dev/null |
+    grep -q "\"name\" : \"${vm_name}\""
+}
+
 ensure_vm() {
-  if ! lume ls | awk 'NR>1 {print $1}' | grep -qx "$vm_name"; then
-    echo "[agent-lab] creating macOS VM $vm_name (one-time download and 100 GB logical disk)..."
-    lume pull macos-tahoe-cua:26.5.2 "$vm_name"
+  if ! vm_exists; then
+    echo "[agent-lab] creating macOS VM $vm_name (one-time download, large)..." >&2
+    lume pull "$vm_image" "$vm_name"
   fi
 }
 
-guest_project() {
-  basename "$1"
-}
-
 wait_for_ssh() {
-  local attempt
-  for attempt in $(seq 1 90); do
-    if lume ssh "$vm_name" 'true' >/dev/null 2>&1; then
+  local _
+  for _ in $(seq 1 90); do
+    if guest_quick 'true' >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -38,36 +70,100 @@ EOF
   return 1
 }
 
+# Homebrew's installer needs sudo. The askpass helper is transferred base64
+# encoded so no part of the password is subject to shell quoting, but it is
+# still briefly readable inside the guest: treat the guest password as a
+# throwaway, never a reused secret.
+install_homebrew() {
+  local script script_b64
+  script="#!/bin/sh
+printf '%s\\n' $(quote "$vm_password")
+"
+  script_b64="$(printf '%s' "$script" | base64 | tr -d '\n')"
+  guest_long "set -eu
+umask 077
+askpass=\$(mktemp /tmp/agent-lab-askpass.XXXXXX)
+trap 'rm -f \"\$askpass\"' EXIT
+printf '%s' ${script_b64} | base64 -d >\"\$askpass\"
+chmod 700 \"\$askpass\"
+SUDO_ASKPASS=\"\$askpass\" NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+}
+
+# Every provisioning step is guarded, so a normal launch is a handful of quick
+# no-op checks rather than a full reinstall of Homebrew, Node, Rust, and the
+# agent on every single session.
+provision_guest() {
+  local agent_package="$1"
+  local formula entry package name
+
+  if ! guest_quick "test -x ${brew_bin}/brew"; then
+    echo "[agent-lab] installing Homebrew in the guest..." >&2
+    install_homebrew
+  fi
+
+  for formula in node rust; do
+    if ! guest_quick "${brew_bin}/brew list --formula $formula >/dev/null 2>&1"; then
+      echo "[agent-lab] installing $formula in the guest..." >&2
+      guest_long "PATH=${brew_bin}:\$PATH ${brew_bin}/brew install $formula"
+    fi
+  done
+
+  # "installed package|name to probe for"
+  for entry in "firebase-tools@15|firebase-tools" "pnpm|pnpm" "${agent_package}|${agent_package}"; do
+    package="${entry%%|*}"
+    name="${entry##*|}"
+    if ! guest_quick "PATH=${brew_bin}:\$PATH ${brew_bin}/npm ls -g --depth 0 $(quote "$name") >/dev/null 2>&1"; then
+      echo "[agent-lab] installing $package in the guest..." >&2
+      guest_long "PATH=${brew_bin}:\$PATH ${brew_bin}/npm install -g $(quote "$package")"
+    fi
+  done
+
+  if ! guest_quick "PATH=${brew_bin}:\$PATH command -v framewatch >/dev/null 2>&1"; then
+    echo "[agent-lab] building Framewatch ${framewatch_version} in the guest (slow, one time)..." >&2
+    guest_long "PATH=${brew_bin}:\$PATH ${brew_bin}/cargo install --locked framewatch --version $(quote "$framewatch_version") --features macos"
+  fi
+}
+
 launch_agent() {
-  local agent="$1" project="$2" guest_dir
-  guest_dir="/Volumes/My Shared Files/$(guest_project "$project")"
-  ensure_vm
-  if lume ls | awk -v vm="$vm_name" '$1 == vm && $7 == "running" { found=1 } END { exit !found }'; then
-    echo "[agent-lab] restarting its macOS VM to attach the selected project..."
-    lume stop "$vm_name" >/dev/null
-  fi
-  lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard --detach >/dev/null
-  echo "[agent-lab] waiting for macOS Remote Login..."
-  wait_for_ssh
-  echo "[agent-lab] preparing $agent and Framewatch inside the macOS VM..."
-  if ! lume ssh "$vm_name" 'test -x /opt/homebrew/bin/brew'; then
-    lume ssh "$vm_name" "printf '#!/bin/sh\\necho %s\\n' '$vm_password' >/tmp/agent-lab-askpass && chmod 700 /tmp/agent-lab-askpass && SUDO_ASKPASS=/tmp/agent-lab-askpass NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"; rc=\$?; rm -f /tmp/agent-lab-askpass; exit \$rc"
-  fi
-  lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/brew install node rust'
-  lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g firebase-tools@15 pnpm'
-  lume ssh "$vm_name" "PATH=/opt/homebrew/bin:\$PATH command -v framewatch >/dev/null 2>&1 || PATH=/opt/homebrew/bin:\$PATH /opt/homebrew/bin/cargo install --locked framewatch --version '$framewatch_version' --features macos"
-  local terminal_command escaped_command
+  local agent="$1" project="$2" guest_dir agent_package agent_bin flag
   if [[ "$agent" == codex ]]; then
-    lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @openai/codex'
-    terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=/opt/homebrew/bin:\$PATH; exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
+    agent_package=@openai/codex
+    agent_bin=codex
+    flag=--dangerously-bypass-approvals-and-sandbox
   else
-    lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @anthropic-ai/claude-code'
-    terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=/opt/homebrew/bin:\$PATH; exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
+    agent_package=@anthropic-ai/claude-code
+    agent_bin=claude
+    flag=--dangerously-skip-permissions
   fi
+  guest_dir="/Volumes/My Shared Files/$(basename "$project")"
+
+  ensure_vm
+  # The shared directory is bound at boot, so switching projects means a
+  # restart. `lume stop` on an already-stopped VM is a harmless no-op here.
+  lume stop "$vm_name" >/dev/null 2>&1 || true
+  lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard --detach >/dev/null
+  echo "[agent-lab] waiting for macOS Remote Login..." >&2
+  wait_for_ssh
+  provision_guest "$agent_package"
+
+  # Run the agent in the guest's own Terminal window rather than over SSH:
+  # `lume ssh` gives the command no controlling terminal, which a full-screen
+  # TUI needs. osascript returns as soon as the window is up.
+  local terminal_command escaped_command
+  terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=${brew_bin}:\$PATH; exec ${brew_bin}/${agent_bin} ${flag}"
   escaped_command="${terminal_command//\\/\\\\}"
   escaped_command="${escaped_command//\"/\\\"}"
-  lume ssh "$vm_name" "osascript -e 'tell application \"Terminal\" to do script \"$escaped_command\"'"
-  echo "[agent-lab] $agent is running in the macOS VM's Terminal window."
+  guest_quick "osascript -e 'tell application \"Terminal\" to do script \"$escaped_command\"'"
+  echo "[agent-lab] $agent is running in the macOS VM's Terminal window." >&2
+}
+
+require_project() {
+  local label="$1"
+  shift
+  [[ $# -eq 1 && -d "$1" ]] || {
+    echo "Usage: lume-lab $label /absolute/path/to/project" >&2
+    exit 64
+  }
 }
 
 case "${1:-}" in
@@ -76,14 +172,13 @@ case "${1:-}" in
     ;;
   run)
     shift
-    [[ $# -eq 1 && -d "$1" ]] || { echo "Usage: lume-lab run /absolute/path/to/project" >&2; exit 64; }
-    project="$(cd "$1" && pwd -P)"
-    exec lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard
+    require_project run "$@"
+    exec lume run "$vm_name" --shared-dir "$(cd "$1" && pwd -P):rw" --display native --clipboard
     ;;
   codex|claude)
     agent="$1"
     shift
-    [[ $# -eq 1 && -d "$1" ]] || { echo "Usage: lume-lab $agent /absolute/path/to/project" >&2; exit 64; }
+    require_project "$agent" "$@"
     launch_agent "$agent" "$(cd "$1" && pwd -P)"
     ;;
   status)
