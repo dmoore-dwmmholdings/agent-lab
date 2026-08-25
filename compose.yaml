@@ -1,0 +1,45 @@
+name: codex-lab
+
+services:
+  project:
+    build:
+      context: .
+    init: true
+    working_dir: ${WORKSPACE_DIR:-/workspace/project}
+    volumes:
+      # This is the only host folder that Codex can modify.
+      - type: bind
+        source: ${PROJECT_DIR:?Set PROJECT_DIR to the project folder you want Codex to access}
+        target: ${WORKSPACE_DIR:-/workspace/project}
+      # Docker-managed state: login credentials and portable MCP configuration.
+      # This is not a host-directory mount.
+      - codex-home:/home/codex
+      # GitHub credentials are shared with Claude Lab, but not host-mounted.
+      - agent-github:/github
+      - agent-gcloud:/gcloud
+    # Do not add the Docker socket, a home-directory mount, or privileged mode.
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g
+    environment:
+      HOME: /home/codex
+      GH_CONFIG_DIR: /github/gh
+      GIT_CONFIG_GLOBAL: /github/gitconfig
+      CLOUDSDK_CONFIG: /gcloud
+      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      TERM: ${TERM:-xterm-256color}
+    stdin_open: true
+    tty: true
+
+volumes:
+  codex-home:
+    name: codex-lab-home
+    external: true
+  agent-github:
+    name: agent-lab-github
+    external: true
+  agent-gcloud:
+    name: agent-lab-gcloud
+    external: true

@@ -1,0 +1,42 @@
+name: claude-lab
+
+services:
+  project:
+    build:
+      context: .
+      dockerfile: Dockerfile.claude
+    init: true
+    working_dir: ${WORKSPACE_DIR:-/workspace/project}
+    volumes:
+      - type: bind
+        source: ${PROJECT_DIR:?Set PROJECT_DIR to the project folder you want Claude to access}
+        target: ${WORKSPACE_DIR:-/workspace/project}
+      - claude-home:/home/claude
+      - agent-github:/github
+      - agent-gcloud:/gcloud
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g
+    environment:
+      HOME: /home/claude
+      GH_CONFIG_DIR: /github/gh
+      GIT_CONFIG_GLOBAL: /github/gitconfig
+      CLOUDSDK_CONFIG: /gcloud
+      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      TERM: ${TERM:-xterm-256color}
+      DISABLE_AUTOUPDATER: "1"
+    stdin_open: true
+    tty: true
+
+volumes:
+  claude-home:
+    name: claude-lab-home
+    external: true
+  agent-github:
+    name: agent-lab-github
+    external: true
+  agent-gcloud:
+    name: agent-lab-gcloud
+    external: true

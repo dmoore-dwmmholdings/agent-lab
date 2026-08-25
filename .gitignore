@@ -1,0 +1,22 @@
+.DS_Store
+
+# Local machine and editor clutter
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dependency and build output
+node_modules/
+coverage/
+dist/
+build/
+.tmp/
+*.log
+
+# Local Agent Lab state (credentials belong only in Docker named volumes)
+.agent-lab.local.json

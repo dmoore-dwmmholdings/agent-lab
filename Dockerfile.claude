@@ -1,0 +1,44 @@
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       bash ca-certificates curl git gnupg openssh-client ripgrep tar \
+    && install -d -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+       | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+       > /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-cloud-cli \
+    && case "$(dpkg --print-architecture)" in \
+         amd64) java_arch=x64 ;; \
+         arm64) java_arch=aarch64 ;; \
+         *) echo "Unsupported Java architecture" >&2; exit 1 ;; \
+       esac \
+    && mkdir -p /opt/java/openjdk-21 \
+    && curl -fsSL "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${java_arch}/jdk/hotspot/normal/eclipse" -o /tmp/openjdk-21.tar.gz \
+    && tar -xzf /tmp/openjdk-21.tar.gz --strip-components=1 -C /opt/java/openjdk-21 \
+    && rm /tmp/openjdk-21.tar.gz \
+    && ln -s /opt/java/openjdk-21/bin/java /usr/local/bin/java \
+    && ln -s /opt/java/openjdk-21/bin/javac /usr/local/bin/javac \
+    && ln -s /opt/java/openjdk-21/bin/jar /usr/local/bin/jar \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global @anthropic-ai/claude-code firebase-tools@15 pnpm
+
+RUN useradd --create-home --shell /bin/bash claude
+COPY lab-entrypoint.mjs /usr/local/bin/agent-lab-entrypoint.mjs
+COPY agent-lab-guidance.md /opt/agent-lab/guidance.md
+RUN chmod 755 /usr/local/bin/agent-lab-entrypoint.mjs
+USER claude
+WORKDIR /workspace
+ENV DISABLE_AUTOUPDATER=1
+ENV CLOUDSDK_CONFIG=/gcloud GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json
+ENV JAVA_HOME=/opt/java/openjdk-21
+CMD ["bash"]

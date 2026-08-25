@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "toolchains": {
+    "rust": "1.85.0"
+  },
+  "setup": [
+    "cargo fetch"
+  ]
+}

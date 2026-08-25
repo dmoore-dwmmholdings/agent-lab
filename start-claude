@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+lab_dir="$(cd "$(dirname "$0")" && pwd -P)"
+
+run_home_command() {
+  if [[ -t 0 && -t 1 ]]; then
+    exec docker run --rm -it --init \
+      --cap-drop ALL --security-opt no-new-privileges:true \
+      --tmpfs /tmp:rw,noexec,nosuid,size=1g \
+      --volume claude-lab-home:/home/claude \
+      --volume agent-lab-github:/github \
+      --volume agent-lab-gcloud:/gcloud \
+      --env GH_CONFIG_DIR=/github/gh \
+      --env GIT_CONFIG_GLOBAL=/github/gitconfig \
+      --env CLOUDSDK_CONFIG=/gcloud \
+      --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
+      claude-lab-project "$@"
+  fi
+  exec docker run --rm --init \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --tmpfs /tmp:rw,noexec,nosuid,size=1g \
+    --volume claude-lab-home:/home/claude \
+    --volume agent-lab-github:/github \
+    --volume agent-lab-gcloud:/gcloud \
+    --env GH_CONFIG_DIR=/github/gh \
+    --env GIT_CONFIG_GLOBAL=/github/gitconfig \
+    --env CLOUDSDK_CONFIG=/gcloud \
+    --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
+    claude-lab-project "$@"
+}
+
+ensure_guidance() {
+  docker run --rm --init \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --volume claude-lab-home:/home/claude \
+    claude-lab-project bash -lc 'mkdir -p /home/claude/.claude; test -e /home/claude/.claude/CLAUDE.md || cp /opt/agent-lab/guidance.md /home/claude/.claude/CLAUDE.md' >/dev/null
+}
+
+case "${1:-}" in
+  login)
+    shift
+    run_home_command env BROWSER=echo claude auth login "$@"
+    ;;
+  status|logout)
+    command="$1"
+    shift
+    run_home_command claude auth "$command" "$@"
+    ;;
+  github)
+    shift
+    exec "${lab_dir}/start-codex" github "$@"
+    ;;
+  gcloud)
+    shift
+    exec "${lab_dir}/start-codex" gcloud "$@"
+    ;;
+  -h|--help|help|"")
+    echo "Usage: claude-lab /absolute/path/to/project"
+    echo "       claude-lab <login|status|logout>"
+    echo "       claude-lab github <login|setup-git|status|logout>"
+    echo "       claude-lab gcloud <login|firestore-login|status>"
+    exit 0
+    ;;
+esac
+
+if [[ $# -ne 1 || ! -d "$1" ]]; then
+  echo "Usage: claude-lab /absolute/path/to/project"
+  exit 64
+fi
+
+export PROJECT_DIR="$(cd "$1" && pwd -P)"
+export WORKSPACE_DIR="/workspace/$(basename "$PROJECT_DIR")"
+ensure_guidance
+cd "$lab_dir"
+exec docker compose -f claude-compose.yaml run --rm project \
+  node /usr/local/bin/agent-lab-entrypoint.mjs \
+  claude --dangerously-skip-permissions

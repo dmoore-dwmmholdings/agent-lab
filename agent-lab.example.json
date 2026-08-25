@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "environment": {
+    "NODE_ENV": "development"
+  },
+  "setup": [
+    "npm ci"
+  ]
+}
