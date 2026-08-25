@@ -1,28 +1,157 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 const workspace = process.cwd();
 const manifestPath = join(workspace, ".agent-lab.json");
+
+function fail(message) {
+  console.error(`[agent-lab] ${message}`);
+  process.exit(64);
+}
+
+// Environment variables that wire the container to its credential volumes and
+// its own tooling. A committed manifest must not be able to repoint them.
+const RESERVED_ENV = new Set([
+  "HOME",
+  "PATH",
+  "TMPDIR",
+  "GH_CONFIG_DIR",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GIT_CONFIG_GLOBAL",
+  "CLOUDSDK_CONFIG",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "NPM_CONFIG_PREFIX",
+]);
+
 let manifest = {};
+let manifestRaw = "";
 
 if (existsSync(manifestPath)) {
+  manifestRaw = readFileSync(manifestPath, "utf8");
   try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest = JSON.parse(manifestRaw);
   } catch (error) {
-    console.error(`Invalid ${manifestPath}: ${error.message}`);
-    process.exit(64);
+    fail(`Invalid ${manifestPath}: ${error.message}`);
+  }
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+    fail(`${manifestPath} must contain a JSON object.`);
   }
   if (manifest.version !== 1) {
-    console.error(`${manifestPath} must set \"version\": 1`);
-    process.exit(64);
+    fail(`${manifestPath} must set "version": 1`);
   }
 }
 
-const environment = { ...process.env, ...(manifest.environment ?? {}) };
+function validateManifest() {
+  const environment = manifest.environment ?? {};
+  if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
+    fail("environment must be an object of string values.");
+  }
+  for (const [key, value] of Object.entries(environment)) {
+    if (typeof value !== "string") {
+      fail(`environment.${key} must be a string.`);
+    }
+    if (RESERVED_ENV.has(key)) {
+      fail(`environment.${key} is reserved by Agent Lab and cannot be set from a manifest.`);
+    }
+  }
+  const rust = manifest.toolchains?.rust;
+  if (rust !== undefined && (typeof rust !== "string" || !/^[A-Za-z0-9._+-]+$/.test(rust))) {
+    fail('toolchains.rust must be a Rust toolchain name, such as "1.85.0" or "stable".');
+  }
+  if (manifest.setup !== undefined && !Array.isArray(manifest.setup)) {
+    fail("setup must be an array of shell commands.");
+  }
+  for (const command of manifest.setup ?? []) {
+    if (typeof command !== "string" || !command.trim()) {
+      fail("Every setup entry must be a non-empty shell command.");
+    }
+  }
+}
+
+// A manifest is executable code that runs before the agent starts, in a
+// container that has the shared GitHub and Google Cloud credentials mounted.
+// Cloning an untrusted repository and pointing a lab at it should not silently
+// run its commands, so an exact copy has to be approved once.
+function trustStorePath() {
+  const dir = join(process.env.HOME ?? "/tmp", ".agent-lab");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, "trusted-manifests");
+}
+
+function describeManifest() {
+  const lines = [];
+  const rust = manifest.toolchains?.rust;
+  if (rust) lines.push(`  rust toolchain: ${rust}`);
+  for (const [key, value] of Object.entries(manifest.environment ?? {})) {
+    lines.push(`  env: ${key}=${value}`);
+  }
+  for (const command of manifest.setup ?? []) {
+    lines.push(`  run: ${command}`);
+  }
+  return lines.length ? lines.join("\n") : "  (no commands)";
+}
+
+function promptYesNo() {
+  const result = spawnSync(
+    "/bin/bash",
+    ["-c", 'read -r reply </dev/tty && printf "%s" "$reply"'],
+    // stderr is discarded: with no controlling terminal /dev/tty simply
+    // fails, and that is a decline, not something to shout about.
+    { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" },
+  );
+  if (result.error || result.status !== 0) return false;
+  return /^y(es)?$/i.test((result.stdout ?? "").trim());
+}
+
+function manifestIsTrusted() {
+  const digest = createHash("sha256").update(manifestRaw).digest("hex");
+  const store = trustStorePath();
+  const known = existsSync(store)
+    ? readFileSync(store, "utf8").split("\n").map((line) => line.trim()).filter(Boolean)
+    : [];
+  if (known.includes(digest)) return true;
+
+  if (process.env.AGENT_LAB_TRUST_MANIFEST === "1") {
+    appendFileSync(store, `${digest}\n`);
+    return true;
+  }
+
+  console.error(`
+[agent-lab] ${manifestPath} has not been approved on this machine.
+
+Before the agent starts, it would run the following inside the container,
+which has your shared GitHub and Google Cloud credentials mounted:
+
+${describeManifest()}
+
+Approve and remember this exact file? [y/N] `);
+
+  if (!promptYesNo()) {
+    console.error("[agent-lab] Declined. Continuing WITHOUT the manifest: no setup commands, no toolchain, no environment overrides.\n");
+    return false;
+  }
+  appendFileSync(store, `${digest}\n`);
+  return true;
+}
+
+let applyManifest = false;
+if (manifestRaw) {
+  validateManifest();
+  applyManifest = manifestIsTrusted();
+}
+
+const environment = { ...process.env, ...(applyManifest ? manifest.environment ?? {} : {}) };
 environment.PATH = `${environment.HOME}/.cargo/bin:${environment.PATH}`;
+
+// /tmp is mounted noexec, which breaks rustup and any build that execs out of
+// TMPDIR, so point TMPDIR at the agent's own home. It lives in a persistent
+// volume, so clear it each session instead of letting it grow forever.
 const executableTempDir = join(environment.HOME, ".agent-lab-tmp");
+rmSync(executableTempDir, { recursive: true, force: true });
 mkdirSync(executableTempDir, { recursive: true });
 environment.TMPDIR = executableTempDir;
 
@@ -33,35 +162,36 @@ function run(command, label) {
     env: environment,
     stdio: "inherit",
   });
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.error) {
+    console.error(`[agent-lab] failed to run ${label}: ${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
 }
 
-const rust = manifest.toolchains?.rust;
-if (rust) {
-  if (typeof rust !== "string" || !/^[A-Za-z0-9._+-]+$/.test(rust)) {
-    console.error("toolchains.rust must be a Rust toolchain name, such as \"1.85.0\" or \"stable\".");
-    process.exit(64);
+if (applyManifest) {
+  const rust = manifest.toolchains?.rust;
+  if (rust) {
+    run(
+      "command -v rustup >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal",
+      "installing rustup",
+    );
+    run(`rustup toolchain install ${rust} && rustup default ${rust}`, "selecting Rust toolchain");
   }
-  run("command -v rustup >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal", "installing rustup");
-  run(`rustup toolchain install ${rust} && rustup default ${rust}`, "selecting Rust toolchain");
-}
-
-if (manifest.setup !== undefined && !Array.isArray(manifest.setup)) {
-  console.error("setup must be an array of shell commands.");
-  process.exit(64);
-}
-for (const command of manifest.setup ?? []) {
-  if (typeof command !== "string" || !command.trim()) {
-    console.error("Every setup entry must be a non-empty shell command.");
-    process.exit(64);
+  for (const command of manifest.setup ?? []) {
+    run(command, "setup");
   }
-  run(command, "setup");
 }
 
 const [agent, ...args] = process.argv.slice(2);
 if (!agent) {
-  console.error("No agent command was supplied.");
-  process.exit(64);
+  fail("No agent command was supplied.");
 }
 const result = spawnSync(agent, args, { cwd: workspace, env: environment, stdio: "inherit" });
+if (result.error) {
+  console.error(`[agent-lab] could not start ${agent}: ${result.error.message}`);
+  process.exit(127);
+}
 process.exit(result.status ?? 1);
