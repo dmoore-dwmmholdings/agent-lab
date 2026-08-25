@@ -56,13 +56,18 @@ launch_agent() {
   lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/brew install node rust'
   lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g firebase-tools@15 pnpm'
   lume ssh "$vm_name" "PATH=/opt/homebrew/bin:\$PATH command -v framewatch >/dev/null 2>&1 || PATH=/opt/homebrew/bin:\$PATH /opt/homebrew/bin/cargo install --locked framewatch --version '$framewatch_version' --features macos"
+  local terminal_command escaped_command
   if [[ "$agent" == codex ]]; then
     lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @openai/codex'
-    lume ssh "$vm_name" "cd '$guest_dir' && PATH=/opt/homebrew/bin:\$PATH exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
+    terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=/opt/homebrew/bin:\$PATH; exec /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"
   else
     lume ssh "$vm_name" 'PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/npm install -g @anthropic-ai/claude-code'
-    lume ssh "$vm_name" "cd '$guest_dir' && PATH=/opt/homebrew/bin:\$PATH exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
+    terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=/opt/homebrew/bin:\$PATH; exec /opt/homebrew/bin/claude --dangerously-skip-permissions"
   fi
+  escaped_command="${terminal_command//\\/\\\\}"
+  escaped_command="${escaped_command//\"/\\\"}"
+  lume ssh "$vm_name" "osascript -e 'tell application \"Terminal\" to do script \"$escaped_command\"'"
+  echo "[agent-lab] $agent is running in the macOS VM's Terminal window."
 }
 
 case "${1:-}" in
