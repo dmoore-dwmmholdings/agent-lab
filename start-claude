@@ -1,97 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_path="$0"
-if [[ -L "$script_path" ]]; then
-  script_path="$(readlink "$script_path")"
-fi
-lab_dir="$(cd "$(dirname "$script_path")" && pwd -P)"
+LAB_CLI=claude-lab
+LAB_AGENT=Claude
+LAB_COMPOSE=claude-compose.yaml
+LAB_PROJECT=claude-lab
+LAB_HOME_VOL=claude-lab-home
+LAB_HOME_DIR=/home/claude
+LAB_GUIDANCE=/home/claude/.claude/CLAUDE.md
+LAB_CMD=claude
+LAB_ARGS=(--dangerously-skip-permissions)
 
-run_home_command() {
-  if [[ -t 0 && -t 1 ]]; then
-    exec docker run --rm -it --init \
-      --cap-drop ALL --security-opt no-new-privileges:true \
-      --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-      --volume claude-lab-home:/home/claude \
-      --volume agent-lab-github:/github \
-      --volume agent-lab-gcloud:/gcloud \
-      --env GH_CONFIG_DIR=/github/gh \
-      --env GIT_CONFIG_GLOBAL=/github/gitconfig \
-      --env CLOUDSDK_CONFIG=/gcloud \
-      --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
-      claude-lab-project "$@"
-  fi
-  exec docker run --rm --init \
-    --cap-drop ALL --security-opt no-new-privileges:true \
-    --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-    --volume claude-lab-home:/home/claude \
-    --volume agent-lab-github:/github \
-    --volume agent-lab-gcloud:/gcloud \
-    --env GH_CONFIG_DIR=/github/gh \
-    --env GIT_CONFIG_GLOBAL=/github/gitconfig \
-    --env CLOUDSDK_CONFIG=/gcloud \
-    --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
-    claude-lab-project "$@"
-}
-
-ensure_guidance() {
-  docker run --rm --init \
-    --cap-drop ALL --security-opt no-new-privileges:true \
-    --volume claude-lab-home:/home/claude \
-    claude-lab-project bash -lc 'mkdir -p /home/claude/.claude; test -e /home/claude/.claude/CLAUDE.md || cp /opt/agent-lab/guidance.md /home/claude/.claude/CLAUDE.md' >/dev/null
-}
+# $0 is normally a symlink in ~/.local/bin. Resolve the whole chain, including
+# relative links, without depending on a `readlink -f` that older macOS lacks.
+self="$0"
+while [ -L "$self" ]; do
+  self_dir="$(cd -P "$(dirname "$self")" && pwd)"
+  self="$(readlink "$self")"
+  case "$self" in /*) ;; *) self="$self_dir/$self" ;; esac
+done
+LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
+# shellcheck source=lab-common.sh
+source "${LAB_DIR}/lab-common.sh"
 
 case "${1:-}" in
-  login)
+  login|status|logout)
+    subcommand="$1"
     shift
-    run_home_command env BROWSER=echo claude auth login "$@"
-    ;;
-  status|logout)
-    command="$1"
-    shift
-    run_home_command claude auth "$command" "$@"
+    lab_run_home_command claude auth "$subcommand" "$@"
     ;;
   github)
     shift
-    exec "${lab_dir}/start-codex" github "$@"
+    lab_github "$@"
     ;;
   gcloud)
     shift
-    exec "${lab_dir}/start-codex" gcloud "$@"
+    lab_gcloud "$@"
+    ;;
+  build)
+    shift
+    lab_build_command "$@"
     ;;
   gui)
     shift
-    export AGENT_LAB_GUI=1
+    [[ $# -eq 1 ]] || { lab_usage >&2; exit 64; }
+    lab_launch gui "$1"
     ;;
   lume)
     shift
-    exec "${lab_dir}/lume-lab" claude "$@"
+    exec "${LAB_DIR}/lume-lab" claude "$@"
     ;;
   -h|--help|help|"")
-    echo "Usage: claude-lab /absolute/path/to/project"
-    echo "       claude-lab <login|status|logout>"
-    echo "       claude-lab github <login|setup-git|identity|status|logout>"
-    echo "       claude-lab gcloud <login|firestore-login|status>"
-    echo "       claude-lab gui /absolute/path/to/project"
-    echo "       claude-lab lume /absolute/path/to/project"
+    lab_usage
     exit 0
     ;;
+  *)
+    [[ $# -eq 1 ]] || { lab_usage >&2; exit 64; }
+    lab_launch headless "$1"
+    ;;
 esac
-
-if [[ $# -ne 1 || ! -d "$1" ]]; then
-  echo "Usage: claude-lab /absolute/path/to/project"
-  exit 64
-fi
-
-export PROJECT_DIR="$(cd "$1" && pwd -P)"
-export WORKSPACE_DIR="/workspace/$(basename "$PROJECT_DIR")"
-ensure_guidance
-cd "$lab_dir"
-if [[ "${AGENT_LAB_GUI:-0}" == 1 ]]; then
-  exec docker compose -f claude-compose.yaml -f compose.gui.yaml run --rm project \
-    /usr/local/bin/agent-lab-gui-entrypoint node /usr/local/bin/agent-lab-entrypoint.mjs \
-    claude --dangerously-skip-permissions
-fi
-exec docker compose -f claude-compose.yaml run --rm project \
-  node /usr/local/bin/agent-lab-entrypoint.mjs \
-  claude --dangerously-skip-permissions

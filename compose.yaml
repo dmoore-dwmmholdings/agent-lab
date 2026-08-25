@@ -1,9 +1,16 @@
+# Codex Lab base definition.
+#
+# The launcher always passes an explicit `-p` project name, which determines the
+# built image tag. Do not rely on the `name:` below for image naming.
 name: codex-lab
 
 services:
   project:
     build:
       context: .
+      args:
+        AGENT_PACKAGE: "@openai/codex"
+        LAB_USER: codex
     init: true
     working_dir: ${WORKSPACE_DIR:-/workspace/project}
     volumes:
@@ -14,21 +21,17 @@ services:
       # Docker-managed state: login credentials and portable MCP configuration.
       # This is not a host-directory mount.
       - codex-home:/home/codex
-      # GitHub credentials are shared with Claude Lab, but not host-mounted.
-      - agent-github:/github
-      - agent-gcloud:/gcloud
     # Do not add the Docker socket, a home-directory mount, or privileged mode.
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    # Backstop against a runaway agent or build forking without limit.
+    pids_limit: ${AGENT_LAB_PIDS_LIMIT:-4096}
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=1g
     environment:
       HOME: /home/codex
-      GH_CONFIG_DIR: /github/gh
-      GIT_CONFIG_GLOBAL: /github/gitconfig
-      CLOUDSDK_CONFIG: /gcloud
-      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      AGENT_LAB_USER: codex
       TERM: ${TERM:-xterm-256color}
     stdin_open: true
     tty: true
@@ -36,10 +39,4 @@ services:
 volumes:
   codex-home:
     name: codex-lab-home
-    external: true
-  agent-github:
-    name: agent-lab-github
-    external: true
-  agent-gcloud:
-    name: agent-lab-gcloud
     external: true

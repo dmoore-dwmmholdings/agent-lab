@@ -1,10 +1,18 @@
+# Claude Lab base definition. Shares the unified Dockerfile with Codex Lab; only
+# the agent package, the unprivileged user, and the auto-updater differ.
+#
+# The launcher always passes an explicit `-p` project name, which determines the
+# built image tag. Do not rely on the `name:` below for image naming.
 name: claude-lab
 
 services:
   project:
     build:
       context: .
-      dockerfile: Dockerfile.claude
+      args:
+        AGENT_PACKAGE: "@anthropic-ai/claude-code"
+        LAB_USER: claude
+        DISABLE_AUTOUPDATER: "1"
     init: true
     working_dir: ${WORKSPACE_DIR:-/workspace/project}
     volumes:
@@ -12,19 +20,15 @@ services:
         source: ${PROJECT_DIR:?Set PROJECT_DIR to the project folder you want Claude to access}
         target: ${WORKSPACE_DIR:-/workspace/project}
       - claude-home:/home/claude
-      - agent-github:/github
-      - agent-gcloud:/gcloud
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    pids_limit: ${AGENT_LAB_PIDS_LIMIT:-4096}
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=1g
     environment:
       HOME: /home/claude
-      GH_CONFIG_DIR: /github/gh
-      GIT_CONFIG_GLOBAL: /github/gitconfig
-      CLOUDSDK_CONFIG: /gcloud
-      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      AGENT_LAB_USER: claude
       TERM: ${TERM:-xterm-256color}
       DISABLE_AUTOUPDATER: "1"
     stdin_open: true
@@ -33,10 +37,4 @@ services:
 volumes:
   claude-home:
     name: claude-lab-home
-    external: true
-  agent-github:
-    name: agent-lab-github
-    external: true
-  agent-gcloud:
-    name: agent-lab-gcloud
     external: true

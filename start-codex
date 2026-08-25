@@ -1,148 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_path="$0"
-if [[ -L "$script_path" ]]; then
-  script_path="$(readlink "$script_path")"
-fi
-lab_dir="$(cd "$(dirname "$script_path")" && pwd -P)"
+LAB_CLI=codex-lab
+LAB_AGENT=Codex
+LAB_COMPOSE=compose.yaml
+LAB_PROJECT=codex-lab
+LAB_HOME_VOL=codex-lab-home
+LAB_HOME_DIR=/home/codex
+LAB_GUIDANCE=/home/codex/.codex/AGENTS.md
+LAB_CMD=codex
+LAB_ARGS=(--dangerously-bypass-approvals-and-sandbox)
 
-run_home_command() {
-  if [[ -t 0 && -t 1 ]]; then
-    exec docker run --rm -it --init \
-      --cap-drop ALL \
-      --security-opt no-new-privileges:true \
-      --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-      --volume codex-lab-home:/home/codex \
-      --volume agent-lab-github:/github \
-      --volume agent-lab-gcloud:/gcloud \
-      --env GH_CONFIG_DIR=/github/gh \
-      --env GIT_CONFIG_GLOBAL=/github/gitconfig \
-      --env CLOUDSDK_CONFIG=/gcloud \
-      --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
-      codex-lab-project "$@"
-  fi
-  exec docker run --rm --init \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-    --volume codex-lab-home:/home/codex \
-    --volume agent-lab-github:/github \
-    --volume agent-lab-gcloud:/gcloud \
-    --env GH_CONFIG_DIR=/github/gh \
-    --env GIT_CONFIG_GLOBAL=/github/gitconfig \
-    --env CLOUDSDK_CONFIG=/gcloud \
-    --env GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json \
-    codex-lab-project "$@"
-}
-
-ensure_guidance() {
-  docker run --rm --init \
-    --cap-drop ALL --security-opt no-new-privileges:true \
-    --volume codex-lab-home:/home/codex \
-    codex-lab-project bash -lc 'mkdir -p /home/codex/.codex; test -e /home/codex/.codex/AGENTS.md || cp /opt/agent-lab/guidance.md /home/codex/.codex/AGENTS.md' >/dev/null
-}
+# $0 is normally a symlink in ~/.local/bin. Resolve the whole chain, including
+# relative links, without depending on a `readlink -f` that older macOS lacks.
+self="$0"
+while [ -L "$self" ]; do
+  self_dir="$(cd -P "$(dirname "$self")" && pwd)"
+  self="$(readlink "$self")"
+  case "$self" in /*) ;; *) self="$self_dir/$self" ;; esac
+done
+LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
+# shellcheck source=lab-common.sh
+source "${LAB_DIR}/lab-common.sh"
 
 case "${1:-}" in
   login)
     shift
-    run_home_command codex login --device-auth "$@"
+    lab_run_home_command codex login --device-auth "$@"
     ;;
   mcp)
     shift
-    run_home_command codex mcp "$@"
+    lab_run_home_command codex mcp "$@"
     ;;
   github)
     shift
-    case "${1:-}" in
-      login)
-        shift
-        run_home_command bash -lc 'GH_BROWSER=echo gh auth login --hostname github.com --git-protocol https --web && gh auth setup-git --hostname github.com && (git config --global --unset-all url."https://github.com/".insteadOf || true) && git config --global --add url."https://github.com/".insteadOf "git@github.com:" && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"'
-        ;;
-      setup-git)
-        shift
-        run_home_command bash -lc 'gh auth setup-git --hostname github.com && (git config --global --unset-all url."https://github.com/".insteadOf || true) && git config --global --add url."https://github.com/".insteadOf "git@github.com:" && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"'
-        ;;
-      identity)
-        shift
-        if [[ $# -ne 2 ]]; then
-          echo "Usage: codex-lab github identity 'Your Name' you@example.com"
-          exit 64
-        fi
-        run_home_command sh -c 'git config --global user.name "$1" && git config --global user.email "$2"' sh "$1" "$2"
-        ;;
-      status|logout)
-        command="$1"
-        shift
-        run_home_command gh auth "$command" "$@"
-        ;;
-      *)
-        echo "Usage: codex-lab github <login|setup-git|identity|status|logout>"
-        exit 64
-        ;;
-    esac
+    lab_github "$@"
     ;;
   gcloud)
     shift
-    case "${1:-}" in
-      login)
-        shift
-        run_home_command gcloud auth login --no-launch-browser "$@"
-        ;;
-      firestore-login|adc-login)
-        shift
-        run_home_command gcloud auth application-default login --no-launch-browser "$@"
-        ;;
-      status)
-        shift
-        run_home_command gcloud auth list "$@"
-        ;;
-      *)
-        echo "Usage: codex-lab gcloud <login|firestore-login|status>"
-        exit 64
-        ;;
-    esac
+    lab_gcloud "$@"
+    ;;
+  build)
+    shift
+    lab_build_command "$@"
     ;;
   gui)
     shift
-    export AGENT_LAB_GUI=1
+    [[ $# -eq 1 ]] || { lab_usage >&2; exit 64; }
+    lab_launch gui "$1"
     ;;
   lume)
     shift
-    exec "${lab_dir}/lume-lab" codex "$@"
+    exec "${LAB_DIR}/lume-lab" codex "$@"
     ;;
   -h|--help|help|"")
-    echo "Usage: codex-lab /absolute/path/to/project"
-    echo "       codex-lab login"
-    echo "       codex-lab mcp <list|add|remove|login|logout> ..."
-    echo "       codex-lab github <login|setup-git|identity|status|logout>"
-    echo "       codex-lab gcloud <login|firestore-login|status>"
-    echo "       codex-lab gui /absolute/path/to/project"
-    echo "       codex-lab lume /absolute/path/to/project"
+    lab_usage
     exit 0
     ;;
+  *)
+    [[ $# -eq 1 ]] || { lab_usage >&2; exit 64; }
+    lab_launch headless "$1"
+    ;;
 esac
-
-if [[ $# -ne 1 ]]; then
-  echo "Usage: codex-lab /absolute/path/to/project"
-  exit 64
-fi
-
-project_dir="$1"
-if [[ ! -d "$project_dir" ]]; then
-  echo "Not a directory: $project_dir"
-  exit 66
-fi
-
-export PROJECT_DIR="$(cd "$project_dir" && pwd -P)"
-export WORKSPACE_DIR="/workspace/$(basename "$PROJECT_DIR")"
-ensure_guidance
-cd "$lab_dir"
-if [[ "${AGENT_LAB_GUI:-0}" == 1 ]]; then
-  exec docker compose -f compose.yaml -f compose.gui.yaml run --rm project \
-    /usr/local/bin/agent-lab-gui-entrypoint node /usr/local/bin/agent-lab-entrypoint.mjs \
-    codex --dangerously-bypass-approvals-and-sandbox
-fi
-exec docker compose run --rm project \
-  node /usr/local/bin/agent-lab-entrypoint.mjs \
-  codex --dangerously-bypass-approvals-and-sandbox
