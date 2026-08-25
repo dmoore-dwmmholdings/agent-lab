@@ -59,13 +59,21 @@ case "${1:-}" in
         shift
         run_home_command bash -lc 'gh auth setup-git --hostname github.com && (git config --global --unset-all url."https://github.com/".insteadOf || true) && git config --global --add url."https://github.com/".insteadOf "git@github.com:" && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"'
         ;;
+      identity)
+        shift
+        if [[ $# -ne 2 ]]; then
+          echo "Usage: codex-lab github identity 'Your Name' you@example.com"
+          exit 64
+        fi
+        run_home_command sh -c 'git config --global user.name "$1" && git config --global user.email "$2"' sh "$1" "$2"
+        ;;
       status|logout)
         command="$1"
         shift
         run_home_command gh auth "$command" "$@"
         ;;
       *)
-        echo "Usage: codex-lab github <login|setup-git|status|logout>"
+        echo "Usage: codex-lab github <login|setup-git|identity|status|logout>"
         exit 64
         ;;
     esac
@@ -103,7 +111,7 @@ case "${1:-}" in
     echo "Usage: codex-lab /absolute/path/to/project"
     echo "       codex-lab login"
     echo "       codex-lab mcp <list|add|remove|login|logout> ..."
-    echo "       codex-lab github <login|setup-git|status|logout>"
+    echo "       codex-lab github <login|setup-git|identity|status|logout>"
     echo "       codex-lab gcloud <login|firestore-login|status>"
     echo "       codex-lab gui /absolute/path/to/project"
     echo "       codex-lab lume /absolute/path/to/project"

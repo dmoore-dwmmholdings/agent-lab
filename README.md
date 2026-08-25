@@ -29,6 +29,7 @@ Authenticate the services you need on that new machine:
 ```bash
 codex-lab login
 codex-lab github login
+codex-lab github identity "Your Name" you@example.com
 codex-lab gcloud login
 codex-lab gcloud firestore-login
 claude-lab login
