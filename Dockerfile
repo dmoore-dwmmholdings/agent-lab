@@ -2,7 +2,9 @@ FROM node:22-bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       bash ca-certificates curl git gnupg openssh-client ripgrep tar \
+       bash ca-certificates cargo curl dbus-x11 ffmpeg fluxbox git gnupg \
+       libgomp1 libx11-dev openssh-client pkg-config ripgrep tar x11-apps \
+       x11vnc x11-xserver-utils xvfb novnc websockify \
     && install -d -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -30,12 +32,14 @@ RUN apt-get update \
     && ln -s /opt/java/openjdk-21/bin/javac /usr/local/bin/javac \
     && ln -s /opt/java/openjdk-21/bin/jar /usr/local/bin/jar \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install --global @openai/codex firebase-tools@15 pnpm
+    && npm install --global @openai/codex firebase-tools@15 pnpm \
+    && cargo install --locked framewatch --features linux-x11
 
 RUN useradd --create-home --shell /bin/bash codex
 COPY lab-entrypoint.mjs /usr/local/bin/agent-lab-entrypoint.mjs
 COPY agent-lab-guidance.md /opt/agent-lab/guidance.md
-RUN chmod 755 /usr/local/bin/agent-lab-entrypoint.mjs
+COPY gui-entrypoint.sh /usr/local/bin/agent-lab-gui-entrypoint
+RUN chmod 755 /usr/local/bin/agent-lab-entrypoint.mjs /usr/local/bin/agent-lab-gui-entrypoint
 USER codex
 WORKDIR /workspace
 ENV CLOUDSDK_CONFIG=/gcloud GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos}"
+if ! command -v lume >/dev/null 2>&1; then
+  echo "Lume is required. Install it with: brew install lume" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  create)
+    lume create "$vm_name" --os macOS --ipsw latest --unattended tahoe --cpu 4 --memory 8GB --disk-size 100GB --display 1920x1080
+    ;;
+  run)
+    shift
+    [[ $# -eq 1 && -d "$1" ]] || { echo "Usage: lume-lab run /absolute/path/to/project" >&2; exit 64; }
+    project="$(cd "$1" && pwd -P)"
+    exec lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard
+    ;;
+  status)
+    exec lume ls
+    ;;
+  stop)
+    exec lume stop "$vm_name"
+    ;;
+  *)
+    echo "Usage: lume-lab <create|run|status|stop>" >&2
+    exit 64
+    ;;
+esac

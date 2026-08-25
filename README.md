@@ -43,6 +43,47 @@ the particular machine where you complete them.
 
 ## Use
 
+## GUI paths
+
+### Default: Linux desktop inside Docker
+
+Use the Docker GUI path for web apps, Linux desktop apps, Electron apps that
+support Linux, and automated visual checks:
+
+```bash
+codex-lab gui /absolute/path/to/project
+# or: claude-lab gui .
+```
+
+Then open http://localhost:6080/vnc.html in a Mac browser. The project is still
+the only host folder mounted into the container. This image provides X11,
+Framewatch's `linux-x11` backend, and `framewatch` on PATH. An agent can use
+`framewatch windows` and `framewatch shot` against apps it starts in that
+desktop. This is the recommended default because it is much faster and uses the
+same Docker isolation as normal Agent Lab sessions.
+
+### Native macOS: Lume VM
+
+For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
+Lume path on Apple Silicon Macs:
+
+```bash
+brew install lume
+lume-lab create       # one-time: downloads macOS and creates a 100 GB VM
+lume-lab run /absolute/path/to/project
+```
+
+Lume runs a real local macOS VM through Apple's Virtualization framework; it is
+not a Linux Docker container. The project is shared explicitly with that VM.
+Use it when macOS fidelity matters, and install/run the macOS build of
+Framewatch inside the guest so it captures guest windows. The default guest
+account has a documented initial password, so change it before sensitive work.
+
+| Path | Best for | Tradeoff |
+| --- | --- | --- |
+| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
+| `lume-lab` | Xcode and native macOS Framewatch | First VM download/setup is large and slower |
+
 Start Codex in a Docker container that can only modify the project directory
 you select:
 

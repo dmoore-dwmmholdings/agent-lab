@@ -1,0 +1,10 @@
+name: agent-lab-gui
+
+services:
+  project:
+    init: true
+    working_dir: ${WORKSPACE_DIR:-/workspace/project}
+    ports: ["6080:6080"]
+    environment:
+      DISPLAY: :99
+      AGENT_LAB_SCREEN: ${AGENT_LAB_SCREEN:-1920x1080x24}
