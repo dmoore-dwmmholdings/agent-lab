@@ -32,6 +32,7 @@ services:
       # Documented opt-out of the manifest approval prompt; it has to be
       # forwarded explicitly or the entrypoint never sees it.
       AGENT_LAB_TRUST_MANIFEST: ${AGENT_LAB_TRUST_MANIFEST:-}
+      AGENT_LAB_PROJECT_KEY: ${AGENT_LAB_PROJECT_KEY:-}
       TERM: ${TERM:-xterm-256color}
       DISABLE_AUTOUPDATER: "1"
     stdin_open: true

@@ -299,7 +299,11 @@ lab_launch() {
   fi
   PROJECT_DIR="$(cd "$project_dir" && pwd -P)"
   WORKSPACE_DIR="/workspace/$(basename "$PROJECT_DIR")"
-  export PROJECT_DIR WORKSPACE_DIR
+  # A short digest of the host path, so two projects that share a basename do
+  # not share container-side state. The digest travels instead of the path
+  # itself, which keeps the host layout out of the container.
+  AGENT_LAB_PROJECT_KEY="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | cut -c1-8)"
+  export PROJECT_DIR WORKSPACE_DIR AGENT_LAB_PROJECT_KEY
   if ! lab_credentials_enabled; then
     echo "[agent-lab] AGENT_LAB_NO_CREDENTIALS=1: GitHub and Google Cloud credentials are not mounted." >&2
   fi

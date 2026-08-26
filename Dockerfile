@@ -6,16 +6,26 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uvbin
 # The instructions are ordered so that the expensive base layers are byte
 # identical for Codex and Claude and are therefore built once and reused. Only
 # the trailing agent-specific layers differ between the two images.
-FROM node:22-bookworm-slim
+# Debian 13 (glibc 2.41), not 12 (glibc 2.36). A growing number of aarch64
+# wheels are built against manylinux_2_39 and simply will not install on
+# bookworm: PySide6, for one, publishes manylinux_2_39_aarch64 and nothing
+# older, so a Qt project cannot sync at all on the older base.
+FROM node:22-trixie-slim
 
+# The libxcb/libxkbcommon entries are the runtime dependencies of Qt's "xcb"
+# platform plugin. Nothing in the image links them, but a pip-installed Qt
+# (PySide6, PyQt) silently falls back to the offscreen platform without them,
+# so a desktop app started in the GUI lab would never appear.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        bash build-essential ca-certificates curl dbus-x11 ffmpeg fluxbox git gnupg \
        procps xterm \
+       libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+       libxcb-render-util0 libxcb-xkb1 libxkbcommon-x11-0 \
        fonts-dejavu-core libdbus-1-3 libegl1 libgl1 libglib2.0-0 libgomp1 \
        libopengl0 libx11-dev libxkbcommon0 openssh-client pkg-config ripgrep tar \
        x11-apps x11-utils \
-       x11vnc x11-utils x11-xserver-utils xvfb novnc websockify \
+       x11vnc x11-xserver-utils xvfb novnc websockify \
     && install -d -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \

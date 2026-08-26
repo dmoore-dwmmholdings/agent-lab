@@ -139,6 +139,19 @@ Python is handled by uv, which installs its own interpreters, so `uv sync
 --locked` works without declaring a Python version. There is no `pip` on PATH
 by design; use `uv pip` if you need that interface.
 
+The image is Debian 13, so wheels built for `manylinux_2_39` install on arm64.
+The Qt platform-plugin libraries are present too, which means a pip-installed
+PySide6 or PyQt opens a real window in the GUI lab instead of silently falling
+back to Qt's offscreen platform.
+
+A project's virtualenv is *not* created in the project directory. Host and
+container are different platforms and cannot share one `.venv`: uv would find an
+interpreter that does not exist on the other side, delete the environment and
+rebuild it, destroying whichever one the host was using. Each project gets its
+own environment inside the agent's Docker-only home instead, where it also
+survives between sessions. Set `UV_PROJECT_ENVIRONMENT` in the manifest to
+override.
+
 Use the manifest only for repository-specific, repeatable setup—for example:
 
 ```json
