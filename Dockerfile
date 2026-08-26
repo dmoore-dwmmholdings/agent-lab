@@ -1,3 +1,6 @@
+ARG UV_VERSION=0.12.6
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uvbin
+
 # Shared image for every Agent Lab flavour.
 #
 # The instructions are ordered so that the expensive base layers are byte
@@ -44,6 +47,11 @@ RUN apt-get update \
 # Shared developer base. Identical for both agents, so this layer is cached once.
 RUN npm install --global firebase-tools@15 pnpm
 
+# uv covers the whole Python story on its own: it resolves and installs
+# dependencies and will fetch a matching interpreter when a project asks for one
+# the image does not have, so no separate pyenv or pip bootstrap is needed.
+COPY --from=uvbin /uv /uvx /usr/local/bin/
+
 COPY lab-entrypoint.mjs /usr/local/bin/agent-lab-entrypoint.mjs
 COPY agent-lab-guidance.md /opt/agent-lab/guidance.md
 COPY gui-entrypoint.sh /usr/local/bin/agent-lab-gui-entrypoint
@@ -76,6 +84,11 @@ ENV PATH=/home/$LAB_USER/.npm-global/bin:$PATH
 # the image instead. Harmless for agents that ignore the variable.
 ARG DISABLE_AUTOUPDATER=0
 ENV DISABLE_AUTOUPDATER=$DISABLE_AUTOUPDATER
+
+# uv's cache lives in the agent's home volume while .venv lives on the bind
+# mounted project, so they are always on different filesystems and uv's default
+# hardlinking cannot work. Copy instead, or every sync warns about it.
+ENV UV_LINK_MODE=copy
 
 ENV CLOUDSDK_CONFIG=/gcloud GOOGLE_APPLICATION_CREDENTIALS=/gcloud/application_default_credentials.json
 ENV JAVA_HOME=/opt/java/openjdk-21

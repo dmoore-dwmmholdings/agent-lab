@@ -107,6 +107,15 @@ For Rust, select a toolchain and prefetch dependencies:
 }
 ```
 
+For Python, uv is already present, so the manifest only needs the sync step:
+
+```json
+{
+  "version": 1,
+  "setup": ["uv sync --locked"]
+}
+```
+
 The Rust toolchain is cached in the agent's Docker-only profile. More examples
 are included in `agent-lab.example.json` and `agent-lab.rust.example.json`.
 
@@ -122,9 +131,13 @@ Google Cloud credential paths.
 
 ### Shared developer base
 
-Every lab starts with Node.js 22, pnpm, Firebase CLI 15, JDK 21, Git/GitHub
+Every lab starts with Node.js 22, pnpm, uv, Firebase CLI 15, JDK 21, Git/GitHub
 CLI, and Google Cloud CLI. Firebase emulators and Node-based build scripts can
 therefore run without declaring these tools in `.agent-lab.json`.
+
+Python is handled by uv, which installs its own interpreters, so `uv sync
+--locked` works without declaring a Python version. There is no `pip` on PATH
+by design; use `uv pip` if you need that interface.
 
 Use the manifest only for repository-specific, repeatable setup—for example:
 

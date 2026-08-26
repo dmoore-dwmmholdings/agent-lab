@@ -4,11 +4,16 @@ This project can opt into repeatable container setup with a committed
 `.agent-lab.json` file in the project root. The launcher reads it before each
 new Codex Lab or Claude Lab session.
 
-The lab already includes Node.js 22, pnpm, Firebase CLI 15, JDK 21, Git/GitHub
-CLI, and Google Cloud CLI. Do not add these as `toolchains` entries. Use setup
-only for repository-specific, idempotent work such as `pnpm install
---frozen-lockfile`, `npm ci`, or `cargo fetch`; never put credentials, tokens,
-private registry settings, or absolute host paths in this file.
+The lab already includes Node.js 22, pnpm, uv, Firebase CLI 15, JDK 21,
+Git/GitHub CLI, and Google Cloud CLI. Do not add these as `toolchains` entries.
+Use setup only for repository-specific, idempotent work such as `pnpm install
+--frozen-lockfile`, `npm ci`, `uv sync --locked`, or `cargo fetch`; never put
+credentials, tokens, private registry settings, or absolute host paths in this
+file.
+
+For Python, use uv rather than pip or a system interpreter. `uv sync` creates
+the project's virtualenv and downloads a matching interpreter when the image
+does not already have one, so a Python version does not need declaring.
 
 The first time a lab sees a given `.agent-lab.json` it shows the commands and
 asks the user to approve them, because those commands run with the shared
