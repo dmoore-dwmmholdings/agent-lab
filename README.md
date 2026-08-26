@@ -266,10 +266,18 @@ and Framewatch's macOS backend, then starts the agent in that shared project.
 Every provisioning step is skipped on later launches once it is already
 present, so a repeat launch is quick.
 
-The agent opens in the VM's own Terminal window rather than over SSH, because a
-full-screen TUI needs a real controlling terminal. Interact with it in the VM's
-native display. Complete the selected agent's one-time login inside the guest;
-it remains inside that VM.
+The agent opens in the VM's own Terminal window rather than over SSH, because
+`lume ssh` provides no controlling terminal and a full-screen TUI needs one.
+Terminal is launched with `open`, not AppleScript: driving it via `osascript`
+requires macOS Automation consent that cannot be granted from an SSH session,
+so that approach simply hangs on a fresh guest. Interact with the agent in the
+VM's native display. Complete its one-time login inside the guest; it remains
+inside that VM.
+
+A Lume VM has exactly one runner and binds its shared directory at boot, so one
+VM serves one project at a time. Launching the same project again reuses the
+running VM instead of restarting it; a different project needs its own VM via
+`AGENT_LAB_LUME_VM=<name>`.
 
 The harness waits for Remote Login before provisioning. If a first boot takes
 longer than three minutes, it prints the exact `lume setup` recovery command.

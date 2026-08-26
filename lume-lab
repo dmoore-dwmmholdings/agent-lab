@@ -10,6 +10,10 @@ vm_user="${AGENT_LAB_LUME_USER:-lume}"
 vm_password="${AGENT_LAB_LUME_PASSWORD:-lume}"
 framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.5}"
 brew_bin=/opt/homebrew/bin
+# cargo installs framewatch into ~/.cargo/bin, so the guest PATH needs both.
+# Deliberately unexpanded: $HOME and $PATH are evaluated inside the guest.
+# shellcheck disable=SC2016
+guest_path='/opt/homebrew/bin:$HOME/.cargo/bin:$PATH'
 
 if ! command -v lume >/dev/null 2>&1; then
   echo "Lume is required. Install it with: brew install lume" >&2
@@ -52,19 +56,17 @@ vm_status() {
   vm_json | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
-# True when the VM is already up with this exact project shared, in which case
-# there is nothing to restart.
-vm_already_serving() {
-  local project="$1"
-  [[ "$(vm_status)" == running ]] || return 1
-  vm_json | grep -qF "$project"
+# lume reports "sharedDirectories": null even while a directory is bound, so the
+# running process's own arguments are the only reliable source for what a live
+# VM is actually serving.
+runner_pid() {
+  pgrep -f "lume run .*${vm_name}" 2>/dev/null | head -1
 }
 
-# Only one process can drive a given VM: lume serialises on a config lock, and
-# a second `lume run` fails with an opaque "Failed to lock auxiliary storage".
-# Detect a foreign runner and say so plainly instead of hanging in the SSH wait.
-foreign_runner_pid() {
-  pgrep -f "lume run .*${vm_name}" 2>/dev/null | grep -v "^$$\$" | head -1
+runner_shared_dir() {
+  ps -o command= -p "$1" 2>/dev/null |
+    sed -n 's/.*--shared-dir \([^ ]*\).*/\1/p' |
+    sed 's/:[a-z][a-z]*$//'
 }
 
 ensure_vm() {
@@ -178,7 +180,7 @@ provision_guest() {
     fi
   done
 
-  if ! guest_quick "PATH=${brew_bin}:\$PATH command -v framewatch >/dev/null 2>&1"; then
+  if ! guest_quick "PATH=${guest_path} command -v framewatch >/dev/null 2>&1"; then
     echo "[agent-lab] building Framewatch ${framewatch_version} in the guest (slow, one time)..." >&2
     guest_long "PATH=${brew_bin}:\$PATH ${brew_bin}/cargo install --locked framewatch --version $(quote "$framewatch_version") --features macos"
   fi
@@ -199,20 +201,32 @@ launch_agent() {
 
   ensure_vm
 
-  local other
-  other="$(foreign_runner_pid || true)"
-  if [[ -n "$other" ]] && ! vm_already_serving "$project"; then
-    cat >&2 <<EOF
-[agent-lab] Another process (PID $other) is already running $vm_name:
-    $(ps -o command= -p "$other" 2>/dev/null | head -1)
-A Lume VM has one runner, and each launch binds its own shared directory, so
-two projects cannot share it. Stop that session, or point this one at a
-different VM with AGENT_LAB_LUME_VM=<name>.
+  local runner shared
+  runner="$(runner_pid || true)"
+  if [[ -n "$runner" ]]; then
+    shared="$(runner_shared_dir "$runner")"
+    if [[ "$(vm_status)" != running ]]; then
+      cat >&2 <<EOF
+[agent-lab] A \`lume run\` process for $vm_name is alive (PID $runner) but the VM
+is not running, so it is a stale runner holding the VM's lock. Nothing can start
+until it is cleared:
+    kill $runner
 EOF
-    return 1
+      return 1
+    fi
+    if [[ "$shared" != "$project" ]]; then
+      cat >&2 <<EOF
+[agent-lab] $vm_name is already running (PID $runner) serving a different project:
+    ${shared:-<unknown>}
+A Lume VM has one runner and binds its shared directory at boot, so two projects
+cannot use it at once. Stop that session, or point this one at a different VM
+with AGENT_LAB_LUME_VM=<name>.
+EOF
+      return 1
+    fi
   fi
 
-  if vm_already_serving "$project"; then
+  if [[ -n "$runner" ]]; then
     echo "[agent-lab] reusing the running VM; $project is already shared." >&2
   else
     # The shared directory is bound at boot, so switching projects means a
@@ -229,13 +243,25 @@ EOF
   provision_guest "$agent_package"
 
   # Run the agent in the guest's own Terminal window rather than over SSH:
-  # `lume ssh` gives the command no controlling terminal, which a full-screen
-  # TUI needs. osascript returns as soon as the window is up.
-  local terminal_command escaped_command
-  terminal_command="cd $(printf '%q' "$guest_dir"); export PATH=${brew_bin}:\$PATH; exec ${brew_bin}/${agent_bin} ${flag}"
-  escaped_command="${terminal_command//\\/\\\\}"
-  escaped_command="${escaped_command//\"/\\\"}"
-  guest_quick "osascript -e 'tell application \"Terminal\" to do script \"$escaped_command\"'"
+  # `lume ssh` gives the command no controlling terminal, and a full-screen TUI
+  # needs one. Launch it with `open`, not AppleScript: controlling Terminal via
+  # osascript needs macOS Automation consent, which cannot be granted from an
+  # SSH session, so `do script` simply hangs on a fresh guest. `open` goes
+  # through LaunchServices and needs no such permission.
+  #
+  # The wrapper is transferred base64 encoded so no path or flag has to survive
+  # two layers of shell quoting.
+  local script script_b64
+  script="#!/bin/sh
+cd $(quote "$guest_dir") || exit 1
+export PATH=${guest_path}
+exec ${brew_bin}/${agent_bin} ${flag}
+"
+  script_b64="$(printf '%s' "$script" | base64 | tr -d '\n')"
+  guest_quick "set -eu
+printf '%s' ${script_b64} | base64 -d >\$HOME/agent-lab-session.command
+chmod 700 \$HOME/agent-lab-session.command
+open -a Terminal \$HOME/agent-lab-session.command"
   echo "[agent-lab] $agent is running in the macOS VM's Terminal window." >&2
 }
 
