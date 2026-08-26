@@ -8,6 +8,7 @@ FROM node:22-bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        bash build-essential ca-certificates curl dbus-x11 ffmpeg fluxbox git gnupg \
+       procps xterm \
        fonts-dejavu-core libdbus-1-3 libegl1 libgl1 libglib2.0-0 libgomp1 \
        libopengl0 libx11-dev libxkbcommon0 openssh-client pkg-config ripgrep tar \
        x11-apps x11-utils \
@@ -48,10 +49,9 @@ COPY agent-lab-guidance.md /opt/agent-lab/guidance.md
 COPY gui-entrypoint.sh /usr/local/bin/agent-lab-gui-entrypoint
 RUN chmod 755 /usr/local/bin/agent-lab-entrypoint.mjs /usr/local/bin/agent-lab-gui-entrypoint
 
-# Everything below is agent specific.
-ARG AGENT_PACKAGE=@openai/codex
-RUN npm install --global "$AGENT_PACKAGE"
-
+# Framewatch depends only on the flavour, never on which agent is installed,
+# so it is built before the agent layer. That lets the Codex and Claude GUI
+# images share one compiled result instead of each paying for the same Rust build.
 ARG FRAMEWATCH_VERSION=0.8.5
 ARG INSTALL_FRAMEWATCH=0
 RUN if [ "$INSTALL_FRAMEWATCH" = 1 ]; then \
@@ -59,6 +59,10 @@ RUN if [ "$INSTALL_FRAMEWATCH" = 1 ]; then \
        && /root/.cargo/bin/cargo install --locked framewatch --version "$FRAMEWATCH_VERSION" --features linux-x11 \
        && install -m 755 /root/.cargo/bin/framewatch /usr/local/bin/framewatch; \
     fi
+
+# Everything below is agent specific.
+ARG AGENT_PACKAGE=@openai/codex
+RUN npm install --global "$AGENT_PACKAGE"
 
 ARG LAB_USER=codex
 RUN useradd --create-home --shell /bin/bash "$LAB_USER"

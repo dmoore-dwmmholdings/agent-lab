@@ -32,6 +32,9 @@ services:
     environment:
       HOME: /home/codex
       AGENT_LAB_USER: codex
+      # Documented opt-out of the manifest approval prompt; it has to be
+      # forwarded explicitly or the entrypoint never sees it.
+      AGENT_LAB_TRUST_MANIFEST: ${AGENT_LAB_TRUST_MANIFEST:-}
       TERM: ${TERM:-xterm-256color}
     stdin_open: true
     tty: true

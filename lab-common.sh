@@ -69,14 +69,53 @@ lab_build() {
   lab_compose "$flavour" build "$@"
 }
 
+# Files whose contents end up baked into an image. If any is newer than the
+# image itself, the image is out of date.
+lab_build_inputs() {
+  printf '%s\n' \
+    "${LAB_DIR}/Dockerfile" \
+    "${LAB_DIR}/lab-entrypoint.mjs" \
+    "${LAB_DIR}/gui-entrypoint.sh" \
+    "${LAB_DIR}/agent-lab-guidance.md"
+}
+
+# Docker stamps images in UTC with nanosecond precision, which BSD date cannot
+# parse; trim to whole seconds and force the parse into UTC. If anything about
+# the comparison fails, report "not stale" rather than rebuilding on every run.
+lab_image_is_stale() {
+  local image="$1" created epoch mtime file
+  created="$(docker image inspect "$image" --format '{{.Created}}' 2>/dev/null)" || return 1
+  created="${created%.*}"
+  created="${created%Z}"
+  epoch="$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%S' "$created" +%s 2>/dev/null)" || return 1
+  [[ -n "$epoch" ]] || return 1
+  while IFS= read -r file; do
+    [[ -e "$file" ]] || continue
+    mtime="$(stat -f %m "$file" 2>/dev/null)" || continue
+    if [[ "$mtime" -gt "$epoch" ]]; then
+      echo "[agent-lab] $(basename "$file") is newer than $image" >&2
+      return 0
+    fi
+  done < <(lab_build_inputs)
+  return 1
+}
+
 # The credential and guidance helpers below run plain `docker run` against an
 # image that only compose knows how to build, so the image has to exist before
 # they are called. Its absence is what made a fresh install fail: `codex-lab
 # login` ran before anything had ever built the image, and Docker fell through
 # to trying to pull `codex-lab-project` from Docker Hub.
+#
+# An image that exists but predates the files baked into it is just as broken,
+# and far more confusing, because the failure shows up as unrelated runtime
+# errors. Rebuild those too; a no-op rebuild is a cache hit and costs a second.
 lab_ensure_image() {
-  local flavour="$1"
-  if ! docker image inspect "$(lab_image_name "$flavour")" >/dev/null 2>&1; then
+  local flavour="$1" image
+  image="$(lab_image_name "$flavour")"
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    lab_build "$flavour"
+  elif [[ "${AGENT_LAB_SKIP_STALE_CHECK:-0}" != 1 ]] && lab_image_is_stale "$image"; then
+    echo "[agent-lab] rebuilding $image so it matches the working tree..." >&2
     lab_build "$flavour"
   fi
 }
@@ -231,6 +270,12 @@ lab_build_command() {
   echo "[agent-lab] rebuilt $(lab_image_name "$flavour")."
 }
 
+lab_port_in_use() {
+  docker ps --format '{{.Ports}}' | grep -q ":$1->" && return 0
+  # Something outside Docker may hold it too.
+  nc -z 127.0.0.1 "$1" >/dev/null 2>&1
+}
+
 lab_compose_run() {
   local flavour="$1"
   shift
@@ -262,8 +307,20 @@ lab_launch() {
   lab_ensure_guidance
   local prefix=()
   if [[ "$flavour" == gui ]]; then
+    local port="${AGENT_LAB_GUI_PORT:-6080}"
+    # Only one container can own a host port, and the raw Docker failure for
+    # this is unreadable. Check first and name the fix.
+    if lab_port_in_use "$port"; then
+      cat >&2 <<EOF
+[agent-lab] Host port ${port} is already in use, most likely by another GUI lab:
+$(docker ps --format '    {{.Names}}  {{.Ports}}' | grep ":${port}->" || echo "    (not a container; something else on this Mac holds it)")
+Start this one on a different port, for example:
+    AGENT_LAB_GUI_PORT=$((port + 1)) ${LAB_CLI} gui <project>
+EOF
+      exit 69
+    fi
     prefix=(/usr/local/bin/agent-lab-gui-entrypoint)
-    echo "[agent-lab] desktop: http://localhost:6080/vnc.html" >&2
+    echo "[agent-lab] desktop: http://localhost:${port}/vnc.html" >&2
   fi
   lab_compose_run "$flavour" ${prefix[@]+"${prefix[@]}"}
 }

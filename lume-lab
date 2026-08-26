@@ -40,9 +40,31 @@ guest_long() { guest_run 0 "$@"; }
 
 # `lume get` prints an error but still exits 0 for an unknown VM, so existence
 # has to be decided from the payload rather than the status code.
+vm_json() {
+  lume get "$vm_name" --format json 2>/dev/null
+}
+
 vm_exists() {
-  lume get "$vm_name" --format json 2>/dev/null |
-    grep -q "\"name\" : \"${vm_name}\""
+  vm_json | grep -q "\"name\" : \"${vm_name}\""
+}
+
+vm_status() {
+  vm_json | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+# True when the VM is already up with this exact project shared, in which case
+# there is nothing to restart.
+vm_already_serving() {
+  local project="$1"
+  [[ "$(vm_status)" == running ]] || return 1
+  vm_json | grep -qF "$project"
+}
+
+# Only one process can drive a given VM: lume serialises on a config lock, and
+# a second `lume run` fails with an opaque "Failed to lock auxiliary storage".
+# Detect a foreign runner and say so plainly instead of hanging in the SSH wait.
+foreign_runner_pid() {
+  pgrep -f "lume run .*${vm_name}" 2>/dev/null | grep -v "^$$\$" | head -1
 }
 
 ensure_vm() {
@@ -50,6 +72,44 @@ ensure_vm() {
     echo "[agent-lab] creating macOS VM $vm_name (one-time download, large)..." >&2
     lume pull "$vm_image" "$vm_name"
   fi
+}
+
+# `lume stop` returns before the VM process has released its locks, so an
+# immediate `lume run` loses a race with it. Wait for the status to settle.
+wait_for_stopped() {
+  local _
+  for _ in $(seq 1 60); do
+    [[ "$(vm_status)" == stopped ]] && { sleep 2; return 0; }
+    sleep 1
+  done
+  echo "[agent-lab] $vm_name did not reach a stopped state." >&2
+  return 1
+}
+
+# `lume run --detach` reports success and returns 0 even when the VM then fails
+# to boot; the real error only lands in the detach log. Poll for the status and
+# surface that log rather than hanging in the SSH wait.
+start_vm() {
+  local project="$1" attempt log
+  log="$HOME/Library/Logs/lume/${vm_name}.log"
+  for attempt in 1 2 3; do
+    lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard --detach >/dev/null 2>&1 || true
+    local _
+    for _ in $(seq 1 45); do
+      [[ "$(vm_status)" == running ]] && return 0
+      sleep 1
+    done
+    echo "[agent-lab] VM did not start (attempt ${attempt}/3)." >&2
+    if [[ -f "$log" ]] && tail -40 "$log" | grep -qi "lock"; then
+      echo "[agent-lab] a stale lock is still held; waiting before retrying..." >&2
+      wait_for_stopped || true
+      continue
+    fi
+    break
+  done
+  echo "[agent-lab] Could not start $vm_name. Last lines of $log:" >&2
+  [[ -f "$log" ]] && tail -12 "$log" | sed 's/^/    /' >&2
+  return 1
 }
 
 wait_for_ssh() {
@@ -138,10 +198,32 @@ launch_agent() {
   guest_dir="/Volumes/My Shared Files/$(basename "$project")"
 
   ensure_vm
-  # The shared directory is bound at boot, so switching projects means a
-  # restart. `lume stop` on an already-stopped VM is a harmless no-op here.
-  lume stop "$vm_name" >/dev/null 2>&1 || true
-  lume run "$vm_name" --shared-dir "$project:rw" --display native --clipboard --detach >/dev/null
+
+  local other
+  other="$(foreign_runner_pid || true)"
+  if [[ -n "$other" ]] && ! vm_already_serving "$project"; then
+    cat >&2 <<EOF
+[agent-lab] Another process (PID $other) is already running $vm_name:
+    $(ps -o command= -p "$other" 2>/dev/null | head -1)
+A Lume VM has one runner, and each launch binds its own shared directory, so
+two projects cannot share it. Stop that session, or point this one at a
+different VM with AGENT_LAB_LUME_VM=<name>.
+EOF
+    return 1
+  fi
+
+  if vm_already_serving "$project"; then
+    echo "[agent-lab] reusing the running VM; $project is already shared." >&2
+  else
+    # The shared directory is bound at boot, so switching projects means a
+    # restart. Stopping is a no-op when it is already stopped.
+    if [[ "$(vm_status)" != stopped ]]; then
+      echo "[agent-lab] restarting $vm_name to attach $project..." >&2
+      lume stop "$vm_name" >/dev/null 2>&1 || true
+    fi
+    wait_for_stopped
+    start_vm "$project"
+  fi
   echo "[agent-lab] waiting for macOS Remote Login..." >&2
   wait_for_ssh
   provision_guest "$agent_package"

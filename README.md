@@ -74,6 +74,11 @@ claude-lab build
 
 `build` pulls a fresh base image by default; add `--no-pull` to skip that.
 
+Launching also rebuilds automatically when the `Dockerfile`, the entrypoints, or
+the guidance file are newer than the image that was built from them. A stale
+image otherwise fails in ways that look unrelated to the real cause. Set
+`AGENT_LAB_SKIP_STALE_CHECK=1` to suppress that check.
+
 Each agent and flavour has its own image (`codex-lab-project`,
 `codex-lab-gui-project`, `claude-lab-project`, `claude-lab-gui-project`), and
 they share the expensive base layers, so the second build of a pair is fast.
@@ -238,6 +243,12 @@ The desktop is published on `127.0.0.1` only, because the VNC server runs
 without a password. Override with `AGENT_LAB_GUI_BIND` only on a network you
 control.
 
+Only one container can own a host port, so a second GUI lab needs its own:
+
+```bash
+AGENT_LAB_GUI_PORT=6081 claude-lab gui /another/project
+```
+
 ### Native macOS: Lume VM
 
 For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
@@ -306,7 +317,9 @@ changes through Git; that prevents the container from seeing host files at all.
 | `AGENT_LAB_NO_CREDENTIALS=1` | Do not mount the shared GitHub/Google Cloud volumes |
 | `AGENT_LAB_TRUST_MANIFEST=1` | Approve `.agent-lab.json` without prompting |
 | `AGENT_LAB_PIDS_LIMIT=<n>` | Container process cap (default 4096) |
+| `AGENT_LAB_SKIP_STALE_CHECK=1` | Do not auto-rebuild an image older than its build inputs |
 | `AGENT_LAB_GUI_BIND=<ip>` | Host interface for the noVNC port (default `127.0.0.1`) |
+| `AGENT_LAB_GUI_PORT=<port>` | Host port for the noVNC desktop (default `6080`) |
 | `AGENT_LAB_SCREEN=<WxHxD>` | Virtual screen geometry (default `1920x1080x24`) |
 | `AGENT_LAB_LUME_VM=<name>` | Lume VM name |
 | `AGENT_LAB_LUME_PASSWORD=<pw>` | Guest password for `lume ssh` |
