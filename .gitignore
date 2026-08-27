@@ -19,3 +19,6 @@ build/
 
 # Local Agent Lab state (credentials belong only in Docker named volumes)
 .agent-lab.local.json
+
+# Local Claude Code settings (contains credentials)
+.claude/settings.local.json
