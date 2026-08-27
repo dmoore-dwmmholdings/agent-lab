@@ -84,6 +84,12 @@ RUN npm install --global "$AGENT_PACKAGE"
 
 ARG LAB_USER=codex
 RUN useradd --create-home --shell /bin/bash "$LAB_USER"
+# Create the shared credential mount points in the image, owned by the agent
+# user. Docker copies this ownership into an empty named volume the first time
+# it is mounted. Without it the volume root stays root-owned and the
+# unprivileged agent cannot write gh, git, or gcloud configuration, which
+# breaks the github and gcloud login commands.
+RUN install -d -o "$LAB_USER" -g "$LAB_USER" -m 700 /github /gcloud
 
 # Agents run unprivileged and cannot write to the global npm prefix. Give them a
 # writable user-level prefix so `npm install -g` from a setup command works.

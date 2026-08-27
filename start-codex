@@ -16,6 +16,23 @@ LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
 source "${LAB_DIR}/lab-common.sh"
 lab_select_agent codex
 
+# Under Git Bash / MSYS on Windows, every argument that looks like a Unix path
+# (/home/codex, /github, /tmp:rw,noexec,...) is rewritten into a Windows path
+# before docker.exe ever sees it, which corrupts the volume and tmpfs flags.
+# Point Windows users at the PowerShell launcher instead of failing obscurely.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    cat >&2 <<EOF
+On Windows, use the PowerShell launcher rather than this script:
+
+  powershell -ExecutionPolicy Bypass -File "${LAB_DIR}/start-codex.ps1" <args>
+
+Run install.ps1 once to get a codex-lab command on PATH.
+EOF
+    exit 69
+    ;;
+esac
+
 case "${1:-}" in
   login)
     shift

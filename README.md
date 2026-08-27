@@ -64,7 +64,7 @@ before choosing the project name.
 
 For a multi-repository task, invoke the lab on the explicit common parent
 directory; that parent and its children become the isolated workspace, while
-the rest of your Mac remains unavailable to the agent.
+the rest of your machine remains unavailable to the agent.
 
 ## Keeping images current
 
@@ -180,7 +180,7 @@ Run this once:
 codex-lab login
 ```
 
-This uses Codex's device-authorisation flow: open the displayed URL on your Mac
+This uses Codex's device-authorisation flow: open the displayed URL in a browser on the host
 and enter the displayed code. The login is stored in Docker's named
 `codex-lab-home` volume, not in a mounted host folder. Every project session
 reuses it.
@@ -268,8 +268,8 @@ to use HTTPS credentials:
 agent-lab github login
 ```
 
-Open the displayed URL on your Mac and complete the sign-in. The resulting
-GitHub credentials are stored only in Docker's `agent-lab-github` volume,
+Open the displayed URL in a browser on the host and complete the sign-in. The
+resulting GitHub credentials are stored only in Docker's `agent-lab-github` volume,
 shared by both labs. Afterward, agents can pull and push over HTTPS. Check or
 revoke this login with `agent-lab github status` or `agent-lab github logout`.
 The login command also configures Git to use GitHub CLI as its credential
@@ -322,8 +322,15 @@ codex-lab gui /absolute/path/to/project
 # or: claude-lab gui .
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+codex-lab gui C:\path\to\project
+# or: claude-lab gui .
+```
+
 The launcher prints the desktop URL as it starts, for example
-http://localhost:6080/vnc.html; open that in a Mac browser. Each session gets
+http://localhost:6080/vnc.html; open that in a browser on the host. Each session gets
 its own host port (the first free one at or above 6080), so you can run several
 GUI labs at once. The project is still
 the only host folder mounted into the container. This image provides X11,
@@ -342,7 +349,7 @@ Only one container can own a host port, so a second GUI lab needs its own:
 AGENT_LAB_GUI_PORT=6081 claude-lab gui /another/project
 ```
 
-### Native macOS: Lume VM
+### Native macOS: Lume VM (macOS only)
 
 For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
 Lume path on Apple Silicon Macs:
@@ -380,13 +387,21 @@ Change the default guest password before sensitive work, and set
 password is passed to `lume ssh` and is briefly readable inside the guest while
 Homebrew is installed, so treat it as a throwaway rather than a reused secret.
 
+This path does not exist on Windows. Lume drives a macOS guest through Apple's
+Virtualization framework, which ships only with macOS on Apple Silicon, and
+macOS cannot be licensed to run in a VM on non-Apple hardware. On Windows,
+`codex-lab lume`, `claude-lab lume`, and `lume-lab` print this explanation and
+exit rather than pretending to work; use the Docker GUI desktop above instead.
+To capture a native Windows application window, run Framewatch directly on the
+Windows host, outside the lab.
+
 Agent Lab pins Framewatch to version `0.8.5`. Override that default with
 `AGENT_LAB_FRAMEWATCH_VERSION=<version>` when needed.
 
 | Path | Best for | Tradeoff |
 | --- | --- | --- |
-| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
-| `codex-lab lume` / `claude-lab lume` | Xcode and native macOS Framewatch | First VM download/setup is large and slower |
+| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch. macOS and Windows | Not macOS; cannot capture host macOS or Windows windows |
+| `codex-lab lume` / `claude-lab lume` | Xcode and native macOS Framewatch. macOS only | First VM download/setup is large and slower |
 
 ## Security boundary
 

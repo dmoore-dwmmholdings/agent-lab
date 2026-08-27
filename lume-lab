@@ -9,6 +9,27 @@ vm_image="${AGENT_LAB_LUME_IMAGE:-macos-tahoe-cua:26.5.2}"
 vm_user="${AGENT_LAB_LUME_USER:-lume}"
 vm_password="${AGENT_LAB_LUME_PASSWORD:-lume}"
 framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.5}"
+
+# Lume drives a macOS guest through Apple's Virtualization framework, which
+# ships only with macOS on Apple Silicon. Say so before the missing-lume error
+# sends a Linux or Windows user off to install Homebrew.
+if [[ "$(uname -s)" != Darwin ]]; then
+  cat >&2 <<'EOF'
+lume-lab is macOS-only.
+
+It boots a real macOS guest with Apple's Virtualization framework, which exists
+only on Apple Silicon Macs.
+
+For GUI work elsewhere, use the Docker desktop path instead. It gives an agent
+an X11 display, a window manager, and Framewatch's linux-x11 backend:
+
+  codex-lab gui /absolute/path/to/project
+  claude-lab gui /absolute/path/to/project
+
+Then open the desktop URL the launcher prints in your browser.
+EOF
+  exit 69
+fi
 brew_bin=/opt/homebrew/bin
 # cargo installs framewatch into ~/.cargo/bin, so the guest PATH needs both.
 # Deliberately unexpanded: $HOME and $PATH are evaluated inside the guest.

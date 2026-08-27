@@ -1,0 +1,29 @@
+# Agent Lab is developed on macOS and Windows but everything below either runs
+# inside a Linux container or is parsed by a Linux tool. A CRLF checkout on
+# Windows would put a stray \r in the shebang line and the container would fail
+# with "no such file or directory". Force LF regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Explicit, because these have no extension for `text=auto` to key off.
+install.sh        text eol=lf
+start-codex       text eol=lf
+start-claude      text eol=lf
+lume-lab          text eol=lf
+gui-entrypoint.sh text eol=lf
+Dockerfile        text eol=lf
+Dockerfile.claude text eol=lf
+*.sh              text eol=lf
+*.mjs             text eol=lf
+*.yaml            text eol=lf
+*.yml             text eol=lf
+
+# Windows-side launchers. Batch files genuinely misbehave with LF-only endings.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
