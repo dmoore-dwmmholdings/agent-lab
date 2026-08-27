@@ -102,7 +102,8 @@ mcp_apply() {
   local script arg
   script="$(agent_script "$lab")"
   if [[ "$MCP_DRY_RUN" == 1 ]]; then
-    printf '    %s' "$(basename "$script")"
+    # The command the user would type, not the script file behind it.
+    printf '    %s-lab' "$lab"
     for arg in "$@"; do
       printf ' '
       mcp_quote_arg "$arg"
@@ -213,7 +214,7 @@ agent_lab_mcp_import() {
   while IFS=$'\t' read -r kind path; do
     [[ -f "$path" ]] || continue
     found=1
-    label="${path/#$HOME/\~}"
+    label="${path/#$HOME/~}"
     # base64 so that file content never has to survive a trip through argv or
     # the shell's word splitting.
     payload+="${kind}"$'\t'"${label}"$'\t'"$(base64 <"$path" | tr -d '\n')"$'\n'
