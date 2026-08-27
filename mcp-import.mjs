@@ -441,7 +441,8 @@ if (sorted.length === 0 && !addMode) {
 
 for (const record of sorted) {
   if (!record.enabled) {
-    note("info", `${record.name}: disabled in ${record.source}; not imported`);
+    note("info", `${record.name}: disabled in ${record.source}; dropping it from the labs`);
+    for (const lab of LABS) emit("mcp_drop", shellQuote(lab), shellQuote(record.name));
     continue;
   }
   const detail = record.transport === "stdio" ? record.command : record.url;

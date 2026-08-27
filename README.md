@@ -215,8 +215,10 @@ replaced, so an import also picks up definitions that changed on the host.
 
 Servers marked `enabled = false` are skipped. That still counts as a definition
 for precedence, so switching a server off in the directory beats an enabled one
-of the same name further up. A server already imported before it was disabled
-stays in the lab until you `agent-lab mcp remove` it.
+of the same name further up. If an earlier import already installed it, it is
+removed from both labs, so disabling a server on the host takes effect here too.
+Only names the configuration actually disables are removed: a server you added
+by hand with `agent-lab mcp add` is never touched by an import.
 
 Two things do not survive the translation, and `import` warns when it hits them:
 Codex has no equivalent for Claude's per-server `headers`, and Claude is not

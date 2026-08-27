@@ -120,6 +120,23 @@ mcp_apply() {
   fi
 }
 
+# A server the config disables is dropped from the labs too, so that switching
+# one off on the host is reflected here instead of leaving the last imported
+# copy behind. Most disabled servers were never imported at all, so this is
+# quiet: an absent name is the normal case, not an error.
+mcp_drop() {
+  local lab="$1" name="$2"
+  if [[ "$MCP_DRY_RUN" == 1 ]]; then
+    printf '    %s-lab mcp remove %s' "$lab" "$(mcp_quote_arg "$name")"
+    case "$lab" in
+      claude) printf ' --scope user' ;;
+    esac
+    printf '\n'
+    return 0
+  fi
+  mcp_remove_quietly "$lab" "$name"
+}
+
 mcp_remove_quietly() {
   local lab="$1" name="$2" script
   script="$(agent_script "$lab")"
@@ -340,7 +357,8 @@ Start a session with codex-lab or claude-lab; that choice is not agnostic.
 \`mcp import\` reads ~/.claude.json, ~/.codex/config.toml, and the .mcp.json or
 .codex/config.toml of the directory it runs in, then installs what it finds into
 both labs. A definition in the directory wins over a global one of the same name.
-Servers marked \`enabled = false\` are skipped, but still count for precedence.
+Servers marked \`enabled = false\` are skipped, but still count for precedence,
+and are removed from both labs if an earlier import installed them.
 
 Environment:
        AGENT_LAB_AGENT=<codex|claude>   which image to use for shared-volume work
