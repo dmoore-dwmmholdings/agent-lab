@@ -42,6 +42,7 @@ mkdir -p "$bin_dir"
 ln -sfn "$repo_dir/start-codex" "$bin_dir/codex-lab"
 ln -sfn "$repo_dir/start-claude" "$bin_dir/claude-lab"
 ln -sfn "$repo_dir/lume-lab" "$bin_dir/lume-lab"
+ln -sfn "$repo_dir/agent-lab" "$bin_dir/agent-lab"
 
 if [[ "$prebuild" == 1 ]]; then
   "$repo_dir/start-codex" build
@@ -52,4 +53,4 @@ fi
 
 echo
 echo "Agent Lab installed. Ensure ${bin_dir} is on your PATH."
-echo "Then run: codex-lab login && codex-lab github login && codex-lab gcloud login"
+echo "Then run: agent-lab login && agent-lab github login && agent-lab gcloud login"

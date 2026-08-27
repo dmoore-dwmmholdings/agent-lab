@@ -2,14 +2,6 @@
 set -euo pipefail
 
 LAB_CLI=claude-lab
-LAB_AGENT=Claude
-LAB_COMPOSE=claude-compose.yaml
-LAB_PROJECT=claude-lab
-LAB_HOME_VOL=claude-lab-home
-LAB_HOME_DIR=/home/claude
-LAB_GUIDANCE=/home/claude/.claude/CLAUDE.md
-LAB_CMD=claude
-LAB_ARGS=(--dangerously-skip-permissions)
 
 # $0 is normally a symlink in ~/.local/bin. Resolve the whole chain, including
 # relative links, without depending on a `readlink -f` that older macOS lacks.
@@ -22,12 +14,17 @@ done
 LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
 # shellcheck source=lab-common.sh
 source "${LAB_DIR}/lab-common.sh"
+lab_select_agent claude
 
 case "${1:-}" in
   login|status|logout)
     subcommand="$1"
     shift
     lab_run_home_command claude auth "$subcommand" "$@"
+    ;;
+  mcp)
+    shift
+    lab_run_home_command claude mcp "$@"
     ;;
   github)
     shift

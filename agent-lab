@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# Agent-agnostic front end. Everything here targets both labs at once, or the
+# shared credential volumes that neither lab owns alone. Launching a session
+# stays with `codex-lab` and `claude-lab`, because that choice is the one thing
+# that cannot be agnostic.
+
+set -euo pipefail
+
+LAB_CLI=agent-lab
+
+# $0 is normally a symlink in ~/.local/bin. Resolve the whole chain, including
+# relative links, without depending on a `readlink -f` that older macOS lacks.
+self="$0"
+while [ -L "$self" ]; do
+  self_dir="$(cd -P "$(dirname "$self")" && pwd)"
+  self="$(readlink "$self")"
+  case "$self" in /*) ;; *) self="$self_dir/$self" ;; esac
+done
+LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
+# shellcheck source=lab-common.sh
+source "${LAB_DIR}/lab-common.sh"
+
+agent_script() {
+  printf '%s/start-%s' "$LAB_DIR" "$1"
+}
+
+lab_image_for_agent() {
+  # A subshell: selecting an agent rewrites the LAB_* globals, and callers of
+  # this helper are usually in the middle of using a different one.
+  ( lab_select_agent "$1" && lab_image_name headless )
+}
+
+# Work on the shared GitHub and Google Cloud volumes needs an image, but not any
+# particular one. Prefer an image that already exists so a Claude-only install
+# never builds the Codex image just to run a login.
+agent_lab_backend() {
+  local candidate
+  if [[ -n "${AGENT_LAB_AGENT:-}" ]]; then
+    printf '%s' "$AGENT_LAB_AGENT"
+    return 0
+  fi
+  for candidate in $(lab_agents); do
+    if docker image inspect "$(lab_image_for_agent "$candidate")" >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  printf 'claude'
+}
+
+# Which labs a subcommand touches. --only narrows it to one.
+AGENT_LAB_TARGETS=()
+agent_lab_set_targets() {
+  if [[ -n "${1:-}" ]]; then
+    lab_select_agent "$1" >/dev/null
+    AGENT_LAB_TARGETS=("$1")
+  else
+    AGENT_LAB_TARGETS=()
+    while IFS= read -r line; do AGENT_LAB_TARGETS+=("$line"); done < <(lab_agents)
+  fi
+}
+
+agent_lab_heading() {
+  printf '\n[agent-lab] ===== %s =====\n' "$1" >&2
+}
+
+# ------------------------------------------------------------------------ MCP
+
+MCP_DRY_RUN=0
+
+# Servers whose install command failed, as "<lab>\t<name>". The generated
+# script is sourced under `set -e`, so without collecting these a single agent
+# rejecting a single name would abandon every server sorted after it. One
+# reserved or malformed name should cost that one server, not the import.
+MCP_FAILURES=()
+
+# The three hooks below are called by the shell that mcp-import.mjs generates.
+mcp_note() {
+  case "$1" in
+    warn) printf '[agent-lab] warning: %s\n' "$2" >&2 ;;
+    *) printf '[agent-lab] %s\n' "$2" >&2 ;;
+  esac
+}
+
+mcp_server() {
+  printf '[agent-lab] %s: %s %s (from %s)\n' "$1" "$2" "$3" "$4" >&2
+}
+
+# `printf %q` is correct but escapes so much that a JSON argument becomes
+# unreadable, and dry-run output exists to be read.
+mcp_quote_arg() {
+  case "$1" in
+    *[!A-Za-z0-9_@%+=:,./-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    "") printf "''" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+mcp_apply() {
+  local lab="$1" name="$2"
+  shift 2
+  local script arg
+  script="$(agent_script "$lab")"
+  if [[ "$MCP_DRY_RUN" == 1 ]]; then
+    printf '    %s' "$(basename "$script")"
+    for arg in "$@"; do
+      printf ' '
+      mcp_quote_arg "$arg"
+    done
+    printf '\n'
+    return 0
+  fi
+  # Replace rather than add: that makes a re-run idempotent, and lets an import
+  # pick up a definition that changed on the host instead of failing on a name
+  # that already exists.
+  mcp_remove_quietly "$lab" "$name"
+  if ! "$script" "$@"; then
+    MCP_FAILURES+=("${lab}"$'\t'"${name}")
+  fi
+}
+
+mcp_remove_quietly() {
+  local lab="$1" name="$2" script
+  script="$(agent_script "$lab")"
+  case "$lab" in
+    claude) "$script" mcp remove "$name" --scope user >/dev/null 2>&1 || true ;;
+    *) "$script" mcp remove "$name" >/dev/null 2>&1 || true ;;
+  esac
+}
+
+# Name every server that did not install, after everything that could install
+# has. Returns non-zero so a scripted import still reports trouble.
+mcp_report_failures() {
+  [[ ${#MCP_FAILURES[@]} -gt 0 ]] || return 0
+  local entry lab name
+  echo "[agent-lab] These servers were not installed:" >&2
+  for entry in ${MCP_FAILURES[@]+"${MCP_FAILURES[@]}"}; do
+    IFS=$'\t' read -r lab name <<<"$entry"
+    printf '    %s: %s\n' "$lab" "$name" >&2
+  done
+  echo "[agent-lab] Everything else was installed." >&2
+  return 1
+}
+
+# Run mcp-import.mjs inside a lab image and execute what it prints.
+#
+# Sourcing generated shell is only safe because every value in it is
+# single-quoted by the generator; nothing from a config file is ever evaluated.
+mcp_generate_and_apply() {
+  local backend generated status=0
+  MCP_FAILURES=()
+  backend="$(agent_lab_backend)"
+  lab_select_agent "$backend"
+  lab_ensure_image headless
+  generated="$(mktemp "${TMPDIR:-/tmp}/agent-lab-mcp.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$generated'" EXIT
+  docker run --rm -i \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --network none \
+    --env AGENT_LAB_IMPORT_DIR="${MCP_IMPORT_DIR:-}" \
+    --env AGENT_LAB_ONLY="${MCP_ONLY:-}" \
+    --volume "${LAB_DIR}/mcp-import.mjs:/agent-lab-mcp-import.mjs:ro" \
+    "$(lab_image_name headless)" node /agent-lab-mcp-import.mjs "$@" \
+    >"$generated" || status=$?
+  if [[ "$status" != 0 ]]; then
+    rm -f "$generated"
+    exit "$status"
+  fi
+  if [[ "$MCP_DRY_RUN" == 1 ]]; then
+    echo "[agent-lab] dry run; these commands would be run:" >&2
+  fi
+  # shellcheck source=/dev/null
+  source "$generated"
+  rm -f "$generated"
+  trap - EXIT
+  mcp_report_failures
+}
+
+# Host files that may define MCP servers, global first so that a definition in
+# the current directory wins.
+mcp_source_files() {
+  local dir="$1"
+  printf '%s\t%s\n' claude-json "${HOME}/.claude.json"
+  printf '%s\t%s\n' codex-toml "${HOME}/.codex/config.toml"
+  printf '%s\t%s\n' mcp-json "${dir}/.mcp.json"
+  printf '%s\t%s\n' codex-toml "${dir}/.codex/config.toml"
+}
+
+agent_lab_mcp_import() {
+  local dir="$PWD" kind path label payload="" found=0
+  MCP_DRY_RUN=0
+  MCP_ONLY=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) MCP_DRY_RUN=1 ;;
+      --only)
+        shift
+        [[ $# -gt 0 ]] || { echo "--only needs an agent name." >&2; exit 64; }
+        lab_select_agent "$1" >/dev/null
+        MCP_ONLY="$1"
+        ;;
+      -*) echo "Unknown option: $1" >&2; exit 64 ;;
+      *) dir="$1" ;;
+    esac
+    shift
+  done
+  [[ -d "$dir" ]] || { echo "Not a directory: $dir" >&2; exit 66; }
+  dir="$(cd "$dir" && pwd -P)"
+  MCP_IMPORT_DIR="$dir"
+
+  while IFS=$'\t' read -r kind path; do
+    [[ -f "$path" ]] || continue
+    found=1
+    label="${path/#$HOME/\~}"
+    # base64 so that file content never has to survive a trip through argv or
+    # the shell's word splitting.
+    payload+="${kind}"$'\t'"${label}"$'\t'"$(base64 <"$path" | tr -d '\n')"$'\n'
+    echo "[agent-lab] reading ${label}" >&2
+  done < <(mcp_source_files "$dir")
+
+  if [[ "$found" == 0 ]]; then
+    echo "[agent-lab] No MCP configuration found in ~/.claude.json, ~/.codex/config.toml, ${dir}/.mcp.json, or ${dir}/.codex/config.toml." >&2
+    exit 0
+  fi
+  printf '%s' "$payload" | mcp_generate_and_apply
+}
+
+agent_lab_mcp_add() {
+  MCP_DRY_RUN=0
+  MCP_ONLY=""
+  MCP_IMPORT_DIR=""
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) MCP_DRY_RUN=1 ;;
+      --only)
+        shift
+        [[ $# -gt 0 ]] || { echo "--only needs an agent name." >&2; exit 64; }
+        lab_select_agent "$1" >/dev/null
+        MCP_ONLY="$1"
+        ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  [[ ${#args[@]} -gt 0 ]] || { agent_lab_usage >&2; exit 64; }
+  # stdin is closed: add mode takes its input from these arguments only.
+  mcp_generate_and_apply --add ${args[@]+"${args[@]}"} </dev/null
+}
+
+agent_lab_mcp_list() {
+  local only="" lab
+  if [[ "${1:-}" == "--only" ]]; then
+    [[ -n "${2:-}" ]] || { echo "--only needs an agent name." >&2; exit 64; }
+    only="$2"
+  fi
+  agent_lab_set_targets "$only"
+  for lab in ${AGENT_LAB_TARGETS[@]+"${AGENT_LAB_TARGETS[@]}"}; do
+    agent_lab_heading "$lab"
+    "$(agent_script "$lab")" mcp list || true
+  done
+}
+
+agent_lab_mcp_remove() {
+  local name="" only="" lab script
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --only)
+        shift
+        [[ $# -gt 0 ]] || { echo "--only needs an agent name." >&2; exit 64; }
+        only="$1"
+        ;;
+      -*) echo "Unknown option: $1" >&2; exit 64 ;;
+      *) name="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$name" ]] || { echo "Usage: ${LAB_CLI} mcp remove <name> [--only codex|claude]" >&2; exit 64; }
+  agent_lab_set_targets "$only"
+  for lab in ${AGENT_LAB_TARGETS[@]+"${AGENT_LAB_TARGETS[@]}"}; do
+    script="$(agent_script "$lab")"
+    case "$lab" in
+      claude) "$script" mcp remove "$name" --scope user || true ;;
+      *) "$script" mcp remove "$name" || true ;;
+    esac
+  done
+}
+
+agent_lab_mcp() {
+  case "${1:-}" in
+    import) shift; agent_lab_mcp_import "$@" ;;
+    add) shift; agent_lab_mcp_add "$@" ;;
+    list) shift; agent_lab_mcp_list "$@" ;;
+    remove|rm) shift; agent_lab_mcp_remove "$@" ;;
+    *) agent_lab_usage >&2; exit 64 ;;
+  esac
+}
+
+# -------------------------------------------------------------------- logins
+
+# Agent sign-ins are per-agent: each lab has its own home volume, so both have
+# to be done. GitHub and Google Cloud live in volumes shared by both labs, so
+# those run exactly once.
+agent_lab_each() {
+  local subcommand="$1"
+  shift
+  local only="" lab
+  if [[ "${1:-}" == "--only" ]]; then
+    only="${2:-}"
+    shift 2
+  elif [[ "${1:-}" == codex || "${1:-}" == claude ]]; then
+    only="$1"
+    shift
+  fi
+  agent_lab_set_targets "$only"
+  for lab in ${AGENT_LAB_TARGETS[@]+"${AGENT_LAB_TARGETS[@]}"}; do
+    agent_lab_heading "$lab"
+    "$(agent_script "$lab")" "$subcommand" "$@"
+  done
+}
+
+agent_lab_usage() {
+  cat <<EOF
+Usage: ${LAB_CLI} mcp import [--dry-run] [--only codex|claude] [directory]
+       ${LAB_CLI} mcp add <name> --url <url> [--header 'Name: value']...
+       ${LAB_CLI} mcp add <name> [--env KEY=VALUE]... -- <command> [args...]
+       ${LAB_CLI} mcp list [--only codex|claude]
+       ${LAB_CLI} mcp remove <name>
+       ${LAB_CLI} login|status|logout [codex|claude]
+       ${LAB_CLI} github <login|setup-git|identity|status|logout>
+       ${LAB_CLI} gcloud <login|firestore-login|status>
+       ${LAB_CLI} build [--gui] [--no-pull]
+
+Everything above applies to both labs, or to the credential volumes they share.
+Start a session with codex-lab or claude-lab; that choice is not agnostic.
+
+\`mcp import\` reads ~/.claude.json, ~/.codex/config.toml, and the .mcp.json or
+.codex/config.toml of the directory it runs in, then installs what it finds into
+both labs. A definition in the directory wins over a global one of the same name.
+
+Environment:
+       AGENT_LAB_AGENT=<codex|claude>   which image to use for shared-volume work
+EOF
+}
+
+case "${1:-}" in
+  mcp)
+    shift
+    agent_lab_mcp "$@"
+    ;;
+  login|status|logout)
+    subcommand="$1"
+    shift
+    agent_lab_each "$subcommand" "$@"
+    ;;
+  build)
+    shift
+    agent_lab_each build "$@"
+    ;;
+  github)
+    shift
+    lab_select_agent "$(agent_lab_backend)"
+    lab_github "$@"
+    ;;
+  gcloud)
+    shift
+    lab_select_agent "$(agent_lab_backend)"
+    lab_gcloud "$@"
+    ;;
+  -h|--help|help|"")
+    agent_lab_usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    agent_lab_usage >&2
+    exit 64
+    ;;
+esac

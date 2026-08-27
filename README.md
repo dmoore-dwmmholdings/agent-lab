@@ -16,7 +16,9 @@ explicitly mount.
 
 The installer creates Docker-only named volumes for the Codex login, Claude
 login, GitHub credentials, and Google Cloud credentials. It then installs
-`codex-lab`, `claude-lab`, and `lume-lab` symlinks in `~/.local/bin`.
+`codex-lab`, `claude-lab`, `lume-lab`, and `agent-lab` symlinks in
+`~/.local/bin`. `codex-lab` and `claude-lab` start sessions; `agent-lab` does
+the things that apply to both, such as logins and MCP servers.
 
 Images are built automatically the first time each lab is used. Pass
 `./install.sh --build` to build both up front instead.
@@ -30,13 +32,16 @@ export PATH="$HOME/.local/bin:$PATH"
 Authenticate the services you need on that new machine:
 
 ```bash
-codex-lab login
-codex-lab github login
-codex-lab github identity "Your Name" you@example.com
-codex-lab gcloud login
-codex-lab gcloud firestore-login
-claude-lab login
+agent-lab login
+agent-lab github login
+agent-lab github identity "Your Name" you@example.com
+agent-lab gcloud login
+agent-lab gcloud firestore-login
 ```
+
+`agent-lab login` runs both agents' sign-in flows in turn. GitHub and Google
+Cloud live in volumes that both labs share, so those run once. To sign in to
+only one agent, name it: `agent-lab login claude`.
 
 The named volumes intentionally are not in Git. Logins and any tokens stay on
 the particular machine where you complete them.
@@ -182,18 +187,61 @@ reuses it.
 
 ## MCP servers
 
-Portable MCP configuration is kept in that same container-only home. Add and
-inspect servers with:
+MCP configuration lives in each agent's container-only home volume, so a server
+is added once and every later session for every project sees it. `agent-lab`
+adds servers to both labs from a single command.
+
+### Import what is already on the Mac
 
 ```bash
-codex-lab mcp list
-codex-lab mcp add my-server --url https://example.com/mcp
-codex-lab mcp login my-server
+cd /path/to/project
+agent-lab mcp import --dry-run   # print what it would do
+agent-lab mcp import             # do it
 ```
 
-For a local stdio MCP server, its executable must be installed in the container
-image. Host-app MCP servers such as computer-use cannot safely be transplanted:
-they depend on macOS applications and host paths.
+It reads, in this order:
+
+| Source | Provides |
+| --- | --- |
+| `~/.claude.json` | Claude's user-scope servers, plus the local-scope servers for the directory you run it in |
+| `~/.codex/config.toml` | Codex's `[mcp_servers.*]` tables |
+| `<directory>/.mcp.json` | The project's checked-in Claude servers |
+| `<directory>/.codex/config.toml` | A project-local Codex config, if the repository keeps one |
+
+A definition found in the directory wins over a global one of the same name.
+Each server is then installed into *both* labs, translated into each agent's own
+configuration format. Re-running is safe: an existing server of the same name is
+replaced, so an import also picks up definitions that changed on the host.
+
+Two things do not survive the translation, and `import` warns when it hits them:
+Codex has no equivalent for Claude's per-server `headers`, and Claude is not
+given Codex's `bearer_token_env_var`. A server that authenticates that way needs
+its credential added by hand on the other side.
+
+### Add one by hand
+
+```bash
+agent-lab mcp add linear --url https://mcp.linear.app/mcp
+agent-lab mcp add sentry --url https://mcp.sentry.dev/mcp --header 'Authorization: Bearer TOKEN'
+agent-lab mcp add playwright --env PW_HOME=/tmp/pw -- npx -y @playwright/mcp@latest
+agent-lab mcp list
+agent-lab mcp remove playwright
+```
+
+Add `--only codex` or `--only claude` to any of these to target one lab.
+
+### Local stdio servers
+
+The executable of a stdio server has to exist in the image; the container has no
+access to the Mac's filesystem beyond the project you mount. Add it to the
+`Dockerfile` and run `agent-lab build` (add `--gui` for the desktop images).
+Host-app MCP servers such as computer-use cannot be transplanted at all: they
+depend on macOS applications and host paths.
+
+Anything copied by `import` — tokens in `env` or `headers` included — ends up in
+the lab home volumes, alongside the GitHub and Google Cloud credentials. That is
+the same trust boundary, but it is worth knowing before importing a config full
+of production keys.
 
 ## GitHub
 
@@ -201,16 +249,16 @@ Run this once to authenticate GitHub CLI with a device code and configure Git
 to use HTTPS credentials:
 
 ```bash
-codex-lab github login
+agent-lab github login
 ```
 
 Open the displayed URL on your Mac and complete the sign-in. The resulting
 GitHub credentials are stored only in Docker's `agent-lab-github` volume,
 shared by both labs. Afterward, agents can pull and push over HTTPS. Check or
-revoke this login with `codex-lab github status` or `codex-lab github logout`.
+revoke this login with `agent-lab github status` or `agent-lab github logout`.
 The login command also configures Git to use GitHub CLI as its credential
 helper and transparently maps GitHub SSH remote URLs to HTTPS. If you
-authenticated before this setup was added, run `codex-lab github setup-git`
+authenticated before this setup was added, run `agent-lab github setup-git`
 once.
 
 `claude-lab github ...` operates on the same shared login.
@@ -225,7 +273,7 @@ claude-lab /absolute/path/to/project
 
 Authenticate Claude itself once with `claude-lab login`, and inspect or clear it
 with `claude-lab status` / `claude-lab logout`. This is separate from GitHub
-authentication.
+authentication. `agent-lab login` does the same for both agents in one go.
 
 ## Google Cloud and Firestore
 
@@ -233,13 +281,13 @@ Google Cloud credentials are shared by both labs in a separate Docker-only
 profile. Authenticate the gcloud CLI with:
 
 ```bash
-codex-lab gcloud login
+agent-lab gcloud login
 ```
 
 Then establish Application Default Credentials for Firestore client libraries:
 
 ```bash
-codex-lab gcloud firestore-login
+agent-lab gcloud firestore-login
 ```
 
 Both commands are headless: open the printed Google URL in your normal browser,
@@ -352,6 +400,7 @@ changes through Git; that prevents the container from seeing host files at all.
 | Variable | Effect |
 | --- | --- |
 | `AGENT_LAB_NO_CREDENTIALS=1` | Do not mount the shared GitHub/Google Cloud volumes |
+| `AGENT_LAB_AGENT=<codex\|claude>` | Which image `agent-lab` uses for shared-volume work |
 | `AGENT_LAB_TRUST_MANIFEST=1` | Approve `.agent-lab.json` without prompting |
 | `AGENT_LAB_PIDS_LIMIT=<n>` | Container process cap (default 4096) |
 | `AGENT_LAB_SKIP_STALE_CHECK=1` | Do not auto-rebuild an image older than its build inputs |

@@ -2,14 +2,6 @@
 set -euo pipefail
 
 LAB_CLI=codex-lab
-LAB_AGENT=Codex
-LAB_COMPOSE=compose.yaml
-LAB_PROJECT=codex-lab
-LAB_HOME_VOL=codex-lab-home
-LAB_HOME_DIR=/home/codex
-LAB_GUIDANCE=/home/codex/.codex/AGENTS.md
-LAB_CMD=codex
-LAB_ARGS=(--dangerously-bypass-approvals-and-sandbox)
 
 # $0 is normally a symlink in ~/.local/bin. Resolve the whole chain, including
 # relative links, without depending on a `readlink -f` that older macOS lacks.
@@ -22,11 +14,23 @@ done
 LAB_DIR="$(cd -P "$(dirname "$self")" && pwd)"
 # shellcheck source=lab-common.sh
 source "${LAB_DIR}/lab-common.sh"
+lab_select_agent codex
 
 case "${1:-}" in
   login)
     shift
     lab_run_home_command codex login --device-auth "$@"
+    ;;
+  # `agent-lab status|logout` fans out to both launchers, so these have to exist
+  # here too. Codex spells them differently from Claude: status hangs off
+  # `login`, logout is top level.
+  status)
+    shift
+    lab_run_home_command codex login status "$@"
+    ;;
+  logout)
+    shift
+    lab_run_home_command codex logout "$@"
     ;;
   mcp)
     shift

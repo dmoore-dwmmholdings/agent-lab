@@ -19,6 +19,42 @@
 
 set -euo pipefail
 
+# Per-agent constants. Both launchers and the agnostic `agent-lab` command
+# address the same volumes and images, so they are defined once here rather than
+# copied into each entry point.
+lab_agents() {
+  printf '%s\n' codex claude
+}
+
+lab_select_agent() {
+  case "$1" in
+    codex)
+      LAB_AGENT=Codex
+      LAB_COMPOSE=compose.yaml
+      LAB_PROJECT=codex-lab
+      LAB_HOME_VOL=codex-lab-home
+      LAB_HOME_DIR=/home/codex
+      LAB_GUIDANCE=/home/codex/.codex/AGENTS.md
+      LAB_CMD=codex
+      LAB_ARGS=(--dangerously-bypass-approvals-and-sandbox)
+      ;;
+    claude)
+      LAB_AGENT=Claude
+      LAB_COMPOSE=claude-compose.yaml
+      LAB_PROJECT=claude-lab
+      LAB_HOME_VOL=claude-lab-home
+      LAB_HOME_DIR=/home/claude
+      LAB_GUIDANCE=/home/claude/.claude/CLAUDE.md
+      LAB_CMD=claude
+      LAB_ARGS=(--dangerously-skip-permissions)
+      ;;
+    *)
+      echo "Unknown agent: $1 (expected codex or claude)" >&2
+      return 64
+      ;;
+  esac
+}
+
 lab_credentials_enabled() {
   [[ "${AGENT_LAB_NO_CREDENTIALS:-0}" != 1 ]]
 }
