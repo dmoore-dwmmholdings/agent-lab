@@ -59,6 +59,8 @@ case "${1:-}" in
   mcp-config)
     shift
     [[ "${1:-}" == append && $# -eq 3 ]] || { lab_usage >&2; exit 64; }
+    # shellcheck disable=SC2016  # $HOME and $1/$2 are for the inner shell,
+    # which runs in the container; expanding them here would use the Mac's.
     lab_run_home_command sh -c '
       set -e
       mkdir -p "$HOME/.codex"
