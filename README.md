@@ -258,7 +258,10 @@ codex-lab gui /absolute/path/to/project
 # or: claude-lab gui .
 ```
 
-Then open http://localhost:6080/vnc.html in a Mac browser. The project is still
+The launcher prints the desktop URL as it starts, for example
+http://localhost:6080/vnc.html; open that in a Mac browser. Each session gets
+its own host port (the first free one at or above 6080), so you can run several
+GUI labs at once. The project is still
 the only host folder mounted into the container. This image provides X11,
 Framewatch's `linux-x11` backend, and `framewatch` on PATH. An agent can use
 `framewatch windows` and `framewatch shot` against apps it starts in that
@@ -353,7 +356,9 @@ changes through Git; that prevents the container from seeing host files at all.
 | `AGENT_LAB_PIDS_LIMIT=<n>` | Container process cap (default 4096) |
 | `AGENT_LAB_SKIP_STALE_CHECK=1` | Do not auto-rebuild an image older than its build inputs |
 | `AGENT_LAB_GUI_BIND=<ip>` | Host interface for the noVNC port (default `127.0.0.1`) |
-| `AGENT_LAB_GUI_PORT=<port>` | Host port for the noVNC desktop (default `6080`) |
+| `AGENT_LAB_GUI_PORT=<port>` | Pin the noVNC host port instead of auto-assigning one |
+| `AGENT_LAB_GUI_PORT_BASE=<port>` | Lowest port the auto-assignment considers (default `6080`) |
+| `AGENT_LAB_GUI_PORT_COUNT=<n>` | How many ports it may scan, i.e. concurrent GUI labs (default 64) |
 | `AGENT_LAB_SCREEN=<WxHxD>` | Virtual screen geometry (default `1920x1080x24`) |
 | `AGENT_LAB_LUME_VM=<name>` | Lume VM name |
 | `AGENT_LAB_LUME_PASSWORD=<pw>` | Guest password for `lume ssh` |

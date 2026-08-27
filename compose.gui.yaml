@@ -15,8 +15,9 @@ services:
     # Loopback only. x11vnc runs without a password, so publishing this on all
     # interfaces would hand any host on the network an interactive desktop
     # sitting next to an agent that runs with approvals bypassed.
-    # The host port is configurable so a second GUI lab can run alongside the
-    # first; only one container can own a given port.
+    # The launcher assigns a free host port per session (first free at or above
+    # 6080), so any number of GUI labs can run side by side; only one container
+    # can own a given port.
     ports:
       - "${AGENT_LAB_GUI_BIND:-127.0.0.1}:${AGENT_LAB_GUI_PORT:-6080}:6080"
     environment:

@@ -276,6 +276,72 @@ lab_port_in_use() {
   nc -z 127.0.0.1 "$1" >/dev/null 2>&1
 }
 
+# Where port reservations live. A reservation is a directory named after the
+# port, because `mkdir` is atomic: two launchers racing for the same port cannot
+# both succeed. The pid file inside lets a later launcher tell a live
+# reservation from one left behind by a crash.
+lab_gui_port_dir() {
+  printf '%s' "${AGENT_LAB_STATE_DIR:-${HOME}/.agent-lab}/gui-ports"
+}
+
+lab_release_gui_port() {
+  [[ -n "${LAB_GUI_PORT_LOCK:-}" ]] || return 0
+  rm -rf "$LAB_GUI_PORT_LOCK" 2>/dev/null || true
+  LAB_GUI_PORT_LOCK=""
+}
+
+# Claim a port for this process. Fails if another live launcher holds it.
+lab_claim_gui_port() {
+  local port="$1" dir owner
+  dir="$(lab_gui_port_dir)/${port}"
+  mkdir -p "$(lab_gui_port_dir)" 2>/dev/null || return 1
+  if ! mkdir "$dir" 2>/dev/null; then
+    owner="$(cat "${dir}/pid" 2>/dev/null || true)"
+    # A reservation whose owner is gone is garbage from a crashed launcher.
+    if [[ -n "$owner" ]] && kill -0 "$owner" 2>/dev/null; then
+      return 1
+    fi
+    rm -rf "$dir"
+    mkdir "$dir" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$$" >"${dir}/pid"
+  LAB_GUI_PORT_LOCK="$dir"
+  # The reservation only has to cover the gap between choosing a port and Docker
+  # binding it; from then on the bind itself is the real exclusion. Releasing it
+  # on exit keeps the directory from filling up with dead entries.
+  trap lab_release_gui_port EXIT
+  return 0
+}
+
+# First free host port at or above the base, so any number of GUI labs can run
+# side by side without the user hand-picking ports. Sets LAB_GUI_PORT.
+#
+# This must not run in a command substitution: the reservation it takes is
+# undone by the EXIT trap of the subshell that took it.
+lab_pick_gui_port() {
+  local base="${AGENT_LAB_GUI_PORT_BASE:-6080}"
+  local count="${AGENT_LAB_GUI_PORT_COUNT:-64}"
+  local port
+  for (( port = base; port < base + count; port++ )); do
+    lab_port_in_use "$port" && continue
+    lab_claim_gui_port "$port" || continue
+    # Re-probe after claiming: something may have bound the port while we were
+    # deciding, in which case move on rather than hand Docker a doomed port.
+    if lab_port_in_use "$port"; then
+      lab_release_gui_port
+      continue
+    fi
+    LAB_GUI_PORT="$port"
+    return 0
+  done
+  cat >&2 <<EOF
+[agent-lab] No free host port in ${base}-$(( base + count - 1 )) for the desktop.
+Close a GUI lab, or widen the range:
+    AGENT_LAB_GUI_PORT_COUNT=$(( count * 2 )) ${LAB_CLI} gui <project>
+EOF
+  return 1
+}
+
 lab_compose_run() {
   local flavour="$1"
   shift
@@ -311,18 +377,28 @@ lab_launch() {
   lab_ensure_guidance
   local prefix=()
   if [[ "$flavour" == gui ]]; then
-    local port="${AGENT_LAB_GUI_PORT:-6080}"
-    # Only one container can own a host port, and the raw Docker failure for
-    # this is unreadable. Check first and name the fix.
-    if lab_port_in_use "$port"; then
-      cat >&2 <<EOF
-[agent-lab] Host port ${port} is already in use, most likely by another GUI lab:
+    local port
+    if [[ -n "${AGENT_LAB_GUI_PORT:-}" ]]; then
+      # An explicitly requested port is honoured exactly. Only one container can
+      # own a host port, and the raw Docker failure for this is unreadable, so
+      # check first and name the fix.
+      port="$AGENT_LAB_GUI_PORT"
+      if lab_port_in_use "$port"; then
+        cat >&2 <<EOF
+[agent-lab] Host port ${port} is already in use:
 $(docker ps --format '    {{.Names}}  {{.Ports}}' | grep ":${port}->" || echo "    (not a container; something else on this Mac holds it)")
-Start this one on a different port, for example:
-    AGENT_LAB_GUI_PORT=$((port + 1)) ${LAB_CLI} gui <project>
+Unset AGENT_LAB_GUI_PORT to let ${LAB_CLI} pick a free port automatically.
 EOF
-      exit 69
+        exit 69
+      fi
+    else
+      # Nothing pinned, so take the first free port. This is what lets a ninth
+      # GUI lab start while eight are already running.
+      lab_pick_gui_port || exit 69
+      port="$LAB_GUI_PORT"
     fi
+    AGENT_LAB_GUI_PORT="$port"
+    export AGENT_LAB_GUI_PORT
     prefix=(/usr/local/bin/agent-lab-gui-entrypoint)
     echo "[agent-lab] desktop: http://localhost:${port}/vnc.html" >&2
   fi
@@ -341,5 +417,6 @@ Usage: ${LAB_CLI} /absolute/path/to/project
 Environment:
        AGENT_LAB_NO_CREDENTIALS=1   do not mount shared GitHub/Google Cloud credentials
        AGENT_LAB_PIDS_LIMIT=<n>     process cap inside the container (default 4096)
+       AGENT_LAB_GUI_PORT=<port>    pin the desktop port instead of auto-assigning one
 EOF
 }
