@@ -355,10 +355,12 @@ Everything above applies to both labs, or to the credential volumes they share.
 Start a session with codex-lab or claude-lab; that choice is not agnostic.
 
 \`mcp import\` reads ~/.claude.json, ~/.codex/config.toml, and the .mcp.json or
-.codex/config.toml of the directory it runs in, then installs what it finds into
-both labs. A definition in the directory wins over a global one of the same name.
-Servers marked \`enabled = false\` are skipped, but still count for precedence,
-and are removed from both labs if an earlier import installed them.
+.codex/config.toml of the directory it runs in. Each server goes to the lab of
+the agent that defined it -- Claude's sources to the Claude lab, Codex's to the
+Codex lab -- so nothing crosses over; \`mcp add\` is the way to put one server in
+both. Precedence runs per agent: a definition in the directory beats a global one
+of the same name for that agent. Servers marked \`enabled = false\` are skipped,
+but still count for precedence, and are removed if an earlier import added them.
 
 Environment:
        AGENT_LAB_AGENT=<codex|claude>   which image to use for shared-volume work

@@ -201,16 +201,22 @@ agent-lab mcp import             # do it
 
 It reads, in this order:
 
-| Source | Provides |
-| --- | --- |
-| `~/.claude.json` | Claude's user-scope servers, plus the local-scope servers for the directory you run it in |
-| `~/.codex/config.toml` | Codex's `[mcp_servers.*]` tables |
-| `<directory>/.mcp.json` | The project's checked-in Claude servers |
-| `<directory>/.codex/config.toml` | A project-local Codex config, if the repository keeps one |
+| Source | Provides | Installed into |
+| --- | --- | --- |
+| `~/.claude.json` | Claude's user-scope servers, plus the local-scope servers for the directory you run it in | Claude lab |
+| `~/.codex/config.toml` | Codex's `[mcp_servers.*]` tables | Codex lab |
+| `<directory>/.mcp.json` | The project's checked-in Claude servers | Claude lab |
+| `<directory>/.codex/config.toml` | A project-local Codex config, if the repository keeps one | Codex lab |
 
-A definition found in the directory wins over a global one of the same name.
-Each server is then installed into *both* labs, translated into each agent's own
-configuration format. Re-running is safe: an existing server of the same name is
+Each server goes to the lab of the agent whose configuration defined it. Nothing
+crosses over: your Codex servers do not appear in the Claude lab, and Claude's do
+not appear in Codex's. Use `agent-lab mcp add` when you do want one server in
+both labs at once.
+
+Precedence therefore runs per agent. A definition in the directory beats a global
+one of the same name *for that agent*, and the two agents never override each
+other -- a Codex server and a Claude server that happen to share a name are two
+different servers. Re-running is safe: an existing server of the same name is
 replaced, so an import also picks up definitions that changed on the host.
 
 Servers marked `enabled = false` are skipped. That still counts as a definition

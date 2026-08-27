@@ -349,14 +349,28 @@ if (!addMode) {
 }
 const stdin = Buffer.concat(chunks).toString("utf8");
 
-const servers = new Map(); // name -> record; later sources win
+// Keyed by dialect *and* name. An import keeps each agent's servers to its own
+// lab, so a Codex definition and a Claude definition that happen to share a name
+// are two independent servers, and only sources of the same dialect compete for
+// precedence: ~/.claude.json against the directory's .mcp.json, and
+// ~/.codex/config.toml against the directory's .codex/config.toml.
+const servers = new Map(); // "<dialect>\t<name>" -> record; later sources win
 function offer(record) {
   if (!record) return;
-  const previous = servers.get(record.name);
+  const key = `${record.dialect}\t${record.name}`;
+  const previous = servers.get(key);
   if (previous && previous.source !== record.source) {
     note("info", `${record.name}: ${record.source} overrides ${previous.source}`);
   }
-  servers.set(record.name, record);
+  servers.set(key, record);
+}
+
+// Which labs a record is installed into. An imported server stays with the agent
+// whose configuration defined it; one built by `mcp add` has no dialect of its
+// own, so it still goes to both. --only narrows either case.
+function labsFor(record) {
+  const home = record.dialect === "codex" || record.dialect === "claude" ? [record.dialect] : ["codex", "claude"];
+  return home.filter((lab) => LABS.includes(lab));
 }
 
 if (addMode) offer(recordFromArgv(process.argv));
@@ -434,20 +448,24 @@ function claudeArgs(record) {
   return ["mcp", "add-json", record.name, JSON.stringify(payload), "--scope", "user"];
 }
 
-const sorted = [...servers.values()].sort((a, b) => a.name.localeCompare(b.name));
+const sorted = [...servers.values()].sort(
+  (a, b) => a.name.localeCompare(b.name) || a.dialect.localeCompare(b.dialect),
+);
 if (sorted.length === 0 && !addMode) {
   note("warn", "No MCP servers found in the configuration that was read.");
 }
 
 for (const record of sorted) {
+  const targets = labsFor(record);
+  if (targets.length === 0) continue;
   if (!record.enabled) {
-    note("info", `${record.name}: disabled in ${record.source}; dropping it from the labs`);
-    for (const lab of LABS) emit("mcp_drop", shellQuote(lab), shellQuote(record.name));
+    note("info", `${record.name}: disabled in ${record.source}; removing it from ${targets.join(" and ")}`);
+    for (const lab of targets) emit("mcp_drop", shellQuote(lab), shellQuote(record.name));
     continue;
   }
   const detail = record.transport === "stdio" ? record.command : record.url;
   emit("mcp_server", shellQuote(record.name), shellQuote(record.transport), shellQuote(detail), shellQuote(record.source));
-  for (const lab of LABS) {
+  for (const lab of targets) {
     if (lab === "codex") {
       if (record.transport !== "stdio" && Object.keys(record.headers).length > 0) {
         note("warn", `${record.name}: Codex gets the URL without the headers ${Object.keys(record.headers).join(", ")}; add them by hand if the server needs them.`);
@@ -457,9 +475,6 @@ for (const record of sorted) {
       }
       emit("mcp_apply", "codex", shellQuote(record.name), ...codexArgs(record).map(shellQuote));
     } else {
-      if (record.bearerTokenEnvVar) {
-        note("warn", `${record.name}: Codex authenticates it with $${record.bearerTokenEnvVar}; Claude gets the URL without auth.`);
-      }
       emit("mcp_apply", "claude", shellQuote(record.name), ...claudeArgs(record).map(shellQuote));
     }
   }
