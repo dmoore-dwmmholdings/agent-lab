@@ -7,7 +7,36 @@ if [[ -L "$script_path" ]]; then
 fi
 lab_dir="$(cd "$(dirname "$script_path")" && pwd -P)"
 
+# Under Git Bash / MSYS on Windows, every argument that looks like a Unix path
+# (/home/codex, /github, /tmp:rw,noexec,...) is rewritten into a Windows path
+# before docker.exe ever sees it, which corrupts the volume and tmpfs flags.
+# Point Windows users at the PowerShell launcher instead of failing obscurely.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    cat >&2 <<EOF
+On Windows, use the PowerShell launcher rather than this script:
+
+  powershell -ExecutionPolicy Bypass -File "${lab_dir}/start-codex.ps1" <args>
+
+Run install.ps1 once to get a codex-lab command on PATH.
+EOF
+    exit 69
+    ;;
+esac
+
+# A raw "docker run" needs the image to exist already, which is only true after
+# a project session has built it. Without this, the documented first step on a
+# new machine ("codex-lab login") fails with "Unable to find image".
+ensure_image() {
+  if ! docker image inspect codex-lab-project >/dev/null 2>&1; then
+    echo "[agent-lab] building the codex image (first run only)..." >&2
+    PROJECT_DIR="$lab_dir" WORKSPACE_DIR=/workspace/agent-lab \
+      docker compose -f "$lab_dir/compose.yaml" build >&2
+  fi
+}
+
 run_home_command() {
+  ensure_image
   if [[ -t 0 && -t 1 ]]; then
     exec docker run --rm -it --init \
       --cap-drop ALL \
@@ -37,6 +66,7 @@ run_home_command() {
 }
 
 ensure_guidance() {
+  ensure_image
   docker run --rm --init \
     --cap-drop ALL --security-opt no-new-privileges:true \
     --volume codex-lab-home:/home/codex \
@@ -139,7 +169,10 @@ export WORKSPACE_DIR="/workspace/$(basename "$PROJECT_DIR")"
 ensure_guidance
 cd "$lab_dir"
 if [[ "${AGENT_LAB_GUI:-0}" == 1 ]]; then
-  exec docker compose -f compose.yaml -f compose.gui.yaml run --rm project \
+  # --service-ports is required: "docker compose run" otherwise ignores the
+  # ports the service declares, so the desktop would be unreachable at
+  # http://localhost:6080/vnc.html even though it started correctly.
+  exec docker compose -p codex-lab-gui -f compose.yaml -f compose.gui.yaml run --rm --service-ports project \
     /usr/local/bin/agent-lab-gui-entrypoint node /usr/local/bin/agent-lab-entrypoint.mjs \
     codex --dangerously-bypass-approvals-and-sandbox
 fi

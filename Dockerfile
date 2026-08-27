@@ -5,8 +5,8 @@ ARG INSTALL_FRAMEWATCH=0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        bash build-essential ca-certificates curl dbus-x11 ffmpeg fluxbox git gnupg \
-       libgomp1 libx11-dev openssh-client pkg-config ripgrep tar x11-apps \
-       x11vnc x11-xserver-utils xvfb novnc websockify \
+       libgomp1 libx11-dev openssh-client pkg-config procps ripgrep tar x11-apps \
+       x11-utils x11vnc x11-xserver-utils xvfb novnc websockify \
     && install -d -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -35,9 +35,15 @@ RUN apt-get update \
     && ln -s /opt/java/openjdk-21/bin/jar /usr/local/bin/jar \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global @openai/codex firebase-tools@15 pnpm \
-    && if [ "$INSTALL_FRAMEWATCH" = 1 ]; then curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal && /root/.cargo/bin/cargo install --locked framewatch --version "$FRAMEWATCH_VERSION" --features linux-x11 && ln -s /root/.cargo/bin/framewatch /usr/local/bin/framewatch; fi
+    && if [ "$INSTALL_FRAMEWATCH" = 1 ]; then curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal && /root/.cargo/bin/cargo install --locked framewatch --version "$FRAMEWATCH_VERSION" --features linux-x11 && install -m 755 /root/.cargo/bin/framewatch /usr/local/bin/framewatch; fi
 
 RUN useradd --create-home --shell /bin/bash codex
+# Create the shared credential mount points in the image, owned by the agent
+# user. Docker copies this ownership into an empty named volume the first time
+# it is mounted. Without it the volume root stays root-owned and the
+# unprivileged agent cannot write gh, git, or gcloud configuration, which
+# breaks the github and gcloud login commands.
+RUN install -d -o codex -g codex -m 700 /github /gcloud
 COPY lab-entrypoint.mjs /usr/local/bin/agent-lab-entrypoint.mjs
 COPY agent-lab-guidance.md /opt/agent-lab/guidance.md
 COPY gui-entrypoint.sh /usr/local/bin/agent-lab-gui-entrypoint

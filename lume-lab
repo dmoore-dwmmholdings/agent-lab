@@ -4,6 +4,28 @@ set -euo pipefail
 vm_name="${AGENT_LAB_LUME_VM:-agent-lab-macos-cua}"
 vm_password="${AGENT_LAB_LUME_PASSWORD:-lume}"
 framewatch_version="${AGENT_LAB_FRAMEWATCH_VERSION:-0.8.5}"
+
+# Lume drives a macOS guest through Apple's Virtualization framework, which
+# ships only with macOS on Apple Silicon. Say so before the missing-lume error
+# sends a Linux or Windows user off to install Homebrew.
+if [[ "$(uname -s)" != Darwin ]]; then
+  cat >&2 <<'EOF'
+lume-lab is macOS-only.
+
+It boots a real macOS guest with Apple's Virtualization framework, which exists
+only on Apple Silicon Macs.
+
+For GUI work elsewhere, use the Docker desktop path instead. It gives an agent
+an X11 display, a window manager, and Framewatch's linux-x11 backend:
+
+  codex-lab gui /absolute/path/to/project
+  claude-lab gui /absolute/path/to/project
+
+Then open http://localhost:6080/vnc.html in your browser.
+EOF
+  exit 69
+fi
+
 if ! command -v lume >/dev/null 2>&1; then
   echo "Lume is required. Install it with: brew install lume" >&2
   exit 1

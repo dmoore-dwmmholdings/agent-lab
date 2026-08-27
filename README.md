@@ -4,6 +4,18 @@ Portable Docker sandboxes for Codex and Claude Code. Both tools can run in
 their unrestricted mode while Docker limits them to the project folder you
 explicitly mount.
 
+Agent Lab runs on macOS and on Windows. The Docker sandbox, the GUI desktop,
+and every login command behave the same on both. Only the Lume path is
+macOS-specific, because it boots a real macOS guest.
+
+| Feature | macOS | Windows |
+| --- | --- | --- |
+| Docker sandbox (`codex-lab` / `claude-lab`) | yes | yes |
+| GUI desktop (`... gui`) | yes | yes |
+| Codex / Claude / GitHub / Google Cloud logins | yes | yes |
+| Per-project `.agent-lab.json` setup | yes | yes |
+| Lume macOS VM (`... lume`) | yes | no (see below) |
+
 ## Install on a new Mac
 
 1. Install and start Docker Desktop.
@@ -42,6 +54,79 @@ that same session. Later launches reuse its Docker-only profile.
 The named volumes intentionally are not in Git. Logins and any tokens stay on
 the particular machine where you complete them.
 
+## Install on a new Windows PC
+
+1. Install Docker Desktop and start it. Leave it on its default Linux
+   containers; the lab images are Linux images. If Docker Desktop is switched
+   to Windows containers, right-click its tray icon and choose *Switch to Linux
+   containers*.
+2. Clone this repository anywhere on a local drive.
+3. From a normal, non-elevated PowerShell prompt in the clone:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install.ps1
+   ```
+
+The installer creates the same four Docker-only named volumes, writes
+`codex-lab`, `claude-lab`, and `lume-lab` commands into
+`%LOCALAPPDATA%\AgentLab\bin`, and adds that folder to your user PATH. Open a
+new terminal so the PATH change takes effect.
+
+Windows uses `.cmd` shims rather than symlinks, so the install needs neither
+Developer Mode nor an administrator prompt. Choose a different location with
+`-BinDir`, or skip the PATH edit with `-NoPathUpdate`.
+
+Then authenticate exactly as on macOS:
+
+```powershell
+codex-lab login
+codex-lab github login
+codex-lab github identity "Your Name" you@example.com
+codex-lab gcloud login
+codex-lab gcloud firestore-login
+claude-lab login
+```
+
+Windows paths work wherever the macOS instructions show a Unix path, and `.`
+still means the current directory:
+
+```powershell
+codex-lab C:\path\to\project
+claude-lab .
+```
+
+### Windows notes
+
+- **Use PowerShell, not Git Bash.** The `start-codex` and `start-claude` bash
+  scripts are for macOS. Under Git Bash / MSYS, arguments that look like Unix
+  paths (`/home/codex`, `/github`, `/tmp:rw,noexec,...`) are rewritten into
+  Windows paths before `docker.exe` sees them, which corrupts the volume and
+  tmpfs flags. Those scripts detect Git Bash and redirect you to the PowerShell
+  launcher rather than failing obscurely.
+- **Network drives do not work.** Docker Desktop cannot bind-mount a UNC path
+  such as `\\server\share\project`. Map the share to a drive letter or copy
+  the project onto a local disk. The launcher says so instead of failing inside
+  Docker.
+- **Keep the project on a local disk for speed.** Bind mounts between Windows
+  and a Linux container are much slower than native I/O, which is most visible
+  for large `node_modules` trees.
+- **`.gitattributes` keeps this repository checked out with LF endings.** The
+  launcher scripts and entrypoints run inside a Linux container, and a CRLF
+  shebang makes the container fail with a bare `no such file or directory`, so
+  a checkout under `core.autocrlf=true` would otherwise break every session.
+  A fresh clone gets this right on its own. Only if you cloned before
+  `.gitattributes` existed, refresh the working tree once, on a clean tree,
+  from Git Bash in the repository:
+
+  ```bash
+  git status --short          # confirm there is nothing you would lose
+  git ls-files -z | xargs -0 rm -f
+  git checkout -- .
+  ```
+
+  That rewrites every tracked file from the index, so commit or stash any local
+  edits first: uncommitted changes to tracked files are discarded.
+
 ## Use
 
 ## GUI paths
@@ -56,14 +141,26 @@ codex-lab gui /absolute/path/to/project
 # or: claude-lab gui .
 ```
 
-Then open http://localhost:6080/vnc.html in a Mac browser. The project is still
-the only host folder mounted into the container. This image provides X11,
+On Windows, in PowerShell:
+
+```powershell
+codex-lab gui C:\path\to\project
+# or: claude-lab gui .
+```
+
+Then open http://localhost:6080/vnc.html in a browser on the host. The project
+is still the only host folder mounted into the container. This image provides X11,
 Framewatch's `linux-x11` backend, and `framewatch` on PATH. An agent can use
 `framewatch windows` and `framewatch shot` against apps it starts in that
 desktop. This is the recommended default because it is much faster and uses the
 same Docker isolation as normal Agent Lab sessions.
 
-### Native macOS: Lume VM
+Each agent builds its own desktop image (`codex-lab-gui-project` and
+`claude-lab-gui-project`), because the two are built from different Dockerfiles.
+The first `gui` run for an agent compiles Framewatch and therefore takes several
+minutes; later runs reuse the image.
+
+### Native macOS: Lume VM (macOS only)
 
 For Xcode, Apple frameworks, or actual macOS-window capture, use the optional
 Lume path on Apple Silicon Macs:
@@ -86,13 +183,21 @@ For a guest whose password differs from Lume's initial `lume` password, set
 The harness waits for Remote Login before provisioning. If a first boot takes
 longer than three minutes, it prints the exact `lume setup` recovery command.
 
+This path does not exist on Windows. Lume drives a macOS guest through Apple's
+Virtualization framework, which ships only with macOS on Apple Silicon, and
+macOS cannot be licensed to run in a VM on non-Apple hardware. On Windows,
+`codex-lab lume`, `claude-lab lume`, and `lume-lab` print this explanation and
+exit rather than pretending to work; use the Docker GUI desktop above instead.
+To capture a native Windows application window, run Framewatch directly on the
+Windows host, outside the lab.
+
 Agent Lab pins Framewatch to version `0.8.5`. Override that temporary default
 with `AGENT_LAB_FRAMEWATCH_VERSION=<version>` when needed.
 
 | Path | Best for | Tradeoff |
 | --- | --- | --- |
-| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch | Not macOS; cannot capture host macOS windows |
-| `lume-lab` | Xcode and native macOS Framewatch | First VM download/setup is large and slower |
+| `codex-lab gui` / `claude-lab gui` | Fast visual testing and Linux/X11 Framewatch. macOS and Windows | Not macOS; cannot capture host macOS or Windows windows |
+| `lume-lab` | Xcode and native macOS Framewatch. macOS only | First VM download/setup is large and slower |
 
 Start Codex in a Docker container that can only modify the project directory
 you select:
@@ -153,7 +258,7 @@ Use the manifest only for repository-specific, repeatable setup—for example:
 Never put private registry credentials or tokens in the manifest. For a
 multi-repository task, invoke the lab on the explicit common parent directory;
 that parent and its children become the isolated workspace, while the rest of
-your Mac remains unavailable to the agent.
+your machine remains unavailable to the agent.
 
 Both agents receive built-in guidance on authoring this file. Start a lab once,
 ask the agent to inspect the repository and prepare `.agent-lab.json`, then
@@ -167,8 +272,8 @@ Run this once:
 codex-lab login
 ```
 
-This uses Codex's device-authorisation flow: open the displayed URL on your Mac
-and enter the displayed code. The login is stored in Docker's named
+This uses Codex's device-authorisation flow: open the displayed URL in a browser
+on the host and enter the displayed code. The login is stored in Docker's named
 `codex-lab-home` volume, not in a mounted host folder. Every project session
 reuses it.
 
@@ -196,7 +301,7 @@ to use HTTPS credentials:
 codex-lab github login
 ```
 
-Open the displayed URL on your Mac and complete the sign-in. The resulting
+Open the displayed URL in a browser on the host and complete the sign-in. The resulting
 GitHub credentials are stored only in Docker's `codex-lab-home` volume, shared
 by all lab sessions. Afterward, agents can pull and push over HTTPS. Check or
 revoke this login with `codex-lab github status` or `codex-lab github logout`.

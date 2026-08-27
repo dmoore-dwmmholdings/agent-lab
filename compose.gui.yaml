@@ -1,4 +1,12 @@
-name: agent-lab-gui
+# GUI overlay, shared by both agents.
+#
+# This file deliberately sets no `name:`. Both start-codex and start-claude
+# layer it on top of their own compose file, and Compose derives the built
+# image name from the project name. A name pinned here would give both agents
+# the same image name while they build from different Dockerfiles, so whichever
+# GUI path ran first would win and the other agent's binary would simply be
+# missing from the image. The launchers pass `-p codex-lab-gui` /
+# `-p claude-lab-gui` instead, which keeps the two images distinct.
 
 services:
   project:
