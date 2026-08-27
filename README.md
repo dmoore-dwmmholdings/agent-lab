@@ -213,6 +213,11 @@ Each server is then installed into *both* labs, translated into each agent's own
 configuration format. Re-running is safe: an existing server of the same name is
 replaced, so an import also picks up definitions that changed on the host.
 
+Servers marked `enabled = false` are skipped. That still counts as a definition
+for precedence, so switching a server off in the directory beats an enabled one
+of the same name further up. A server already imported before it was disabled
+stays in the lab until you `agent-lab mcp remove` it.
+
 Two things do not survive the translation, and `import` warns when it hits them:
 Codex has no equivalent for Claude's per-server `headers`, and Claude is not
 given Codex's `bearer_token_env_var`. A server that authenticates that way needs

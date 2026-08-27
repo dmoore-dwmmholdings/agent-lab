@@ -340,6 +340,7 @@ Start a session with codex-lab or claude-lab; that choice is not agnostic.
 \`mcp import\` reads ~/.claude.json, ~/.codex/config.toml, and the .mcp.json or
 .codex/config.toml of the directory it runs in, then installs what it finds into
 both labs. A definition in the directory wins over a global one of the same name.
+Servers marked \`enabled = false\` are skipped, but still count for precedence.
 
 Environment:
        AGENT_LAB_AGENT=<codex|claude>   which image to use for shared-volume work

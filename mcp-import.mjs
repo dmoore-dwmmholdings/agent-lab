@@ -243,7 +243,15 @@ function asStringArray(value) {
 // One shape for both dialects. `transport` is what each lab's CLI is told.
 function normalise(name, entry, source, dialect) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  // `enabled = false` is Codex's way of keeping a definition around without
+  // running it. A disabled entry still takes part in precedence -- switching a
+  // server off in this directory has to beat an enabled one of the same name
+  // further up -- so it is carried as a record and dropped at emission rather
+  // than discarded here. Its command and url go unvalidated on purpose: there
+  // is nothing to complain about in a server nobody is going to start.
+  if (entry.enabled === false) return { name, source, dialect, enabled: false };
   const record = {
+    enabled: true,
     name,
     source,
     dialect,
@@ -432,6 +440,10 @@ if (sorted.length === 0 && !addMode) {
 }
 
 for (const record of sorted) {
+  if (!record.enabled) {
+    note("info", `${record.name}: disabled in ${record.source}; not imported`);
+    continue;
+  }
   const detail = record.transport === "stdio" ? record.command : record.url;
   emit("mcp_server", shellQuote(record.name), shellQuote(record.transport), shellQuote(detail), shellQuote(record.source));
   for (const lab of LABS) {
