@@ -120,6 +120,27 @@ mcp_apply() {
   fi
 }
 
+# Codex servers arrive as a base64 TOML table rather than a flag list, because
+# `codex mcp add` cannot write http_headers and the rest of what a host
+# config.toml carries. The table replaces any existing definition of the name:
+# `codex mcp remove` drops the whole [mcp_servers.<name>] tree, sub-tables
+# included, and the lab then appends the new one and checks Codex can read it.
+mcp_apply_toml() {
+  local lab="$1" name="$2" encoded="$3"
+  local script
+  script="$(agent_script "$lab")"
+  if [[ "$MCP_DRY_RUN" == 1 ]]; then
+    printf '    %s-lab mcp remove %s\n' "$lab" "$(mcp_quote_arg "$name")"
+    printf '    append to the %s lab'"'"'s ~/.codex/config.toml:\n' "$lab"
+    printf '%s' "$encoded" | base64 --decode | sed -e '/^$/d' -e 's/^/        /'
+    return 0
+  fi
+  mcp_remove_quietly "$lab" "$name"
+  if ! "$script" mcp-config append "$name" "$encoded"; then
+    MCP_FAILURES+=("${lab}"$'\t'"${name}")
+  fi
+}
+
 # A server the config disables is dropped from the labs too, so that switching
 # one off on the host is reflected here instead of leaving the last imported
 # copy behind. Most disabled servers were never imported at all, so this is
@@ -361,6 +382,9 @@ Codex lab -- so nothing crosses over; \`mcp add\` is the way to put one server i
 both. Precedence runs per agent: a definition in the directory beats a global one
 of the same name for that agent. Servers marked \`enabled = false\` are skipped,
 but still count for precedence, and are removed if an earlier import added them.
+Codex servers are written into the lab's ~/.codex/config.toml as TOML tables, so
+http_headers, required, and timeouts all carry over; re-run after a token
+rotates and the lab's copy is replaced.
 
 Environment:
        AGENT_LAB_AGENT=<codex|claude>   which image to use for shared-volume work

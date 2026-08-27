@@ -8,6 +8,8 @@
 // argv and out of the shell's way.
 //
 // Output is shell, not data, so the caller does not have to parse JSON in bash.
+// Claude servers become `claude mcp add-json` invocations; Codex servers become
+// TOML tables, base64-encoded, that the lab appends to its own config.toml.
 // Every interpolated value goes through shellQuote(), which makes the emitted
 // script inert regardless of what the source configuration contains.
 
@@ -240,6 +242,29 @@ function asStringArray(value) {
   return value.filter((entry) => typeof entry !== "object" && entry !== null).map(String);
 }
 
+// Scalar keys Codex accepts under [mcp_servers.<name>] beyond the ones every
+// dialect shares. Anything not on this list is dropped rather than copied
+// blind, so an unknown key can never make the lab's config.toml unreadable.
+const CODEX_SCALAR_KEYS = [
+  "cwd",
+  "required",
+  "default_tools_approval_mode",
+  "startup_timeout_sec",
+  "tool_timeout_sec",
+  "startup_timeout_ms",
+];
+
+function codexExtras(entry) {
+  const scalars = {};
+  for (const key of CODEX_SCALAR_KEYS) {
+    const value = entry[key];
+    if (typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
+      scalars[key] = value;
+    }
+  }
+  return { scalars, envHttpHeaders: asStringMap(entry.env_http_headers) };
+}
+
 // One shape for both dialects. `transport` is what each lab's CLI is told.
 function normalise(name, entry, source, dialect) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
@@ -262,6 +287,10 @@ function normalise(name, entry, source, dialect) {
     url: typeof entry.url === "string" ? entry.url : "",
     bearerTokenEnvVar:
       typeof entry.bearer_token_env_var === "string" ? entry.bearer_token_env_var : "",
+    // Codex-only settings that have no Claude counterpart. They ride along on a
+    // Codex-to-Codex import so the lab's copy behaves like the host's: a server
+    // marked `required` stays required, a timeout stays a timeout.
+    codex: dialect === "codex" ? codexExtras(entry) : { scalars: {}, envHttpHeaders: {} },
   };
   // Claude writes an explicit type; Codex and older Claude configs do not, so
   // fall back to whichever of url/command is present.
@@ -424,20 +453,60 @@ for (const line of stdin.split("\n")) {
 
 // ------------------------------------------------------------------ emission
 
-// Codex takes flags; Claude takes the server object verbatim through add-json,
-// which is the higher-fidelity path and the reason headers survive on that side.
-function codexArgs(record) {
-  const args = ["mcp", "add", record.name];
+// Codex is given a TOML table written straight into its config.toml. Its own
+// `codex mcp add` cannot express `http_headers`, `required`, timeouts, or a
+// working directory, so a server that authenticates with a header could never
+// be installed through it -- the lab's copy either lost the header or, if the
+// import declined to touch it, kept a token that had since rotated. Either way
+// Codex failed to start with "Auth required". Writing the table ourselves keeps
+// every field the host had.
+//
+// Claude takes the server object verbatim through add-json.
+
+function tomlString(value) {
+  // JSON string syntax is a subset of a TOML basic string, except that JSON
+  // leaves DEL unescaped and TOML forbids it.
+  return JSON.stringify(String(value)).replace(//g, "\\u007F");
+}
+
+function tomlKey(key) {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlString(key);
+}
+
+function tomlValue(value) {
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return `[${value.map(tomlString).join(", ")}]`;
+  return tomlString(value);
+}
+
+function tomlTable(header, pairs) {
+  const entries = Object.entries(pairs);
+  if (entries.length === 0) return "";
+  const lines = [`[${header}]`];
+  for (const [key, value] of entries) lines.push(`${tomlKey(key)} = ${tomlValue(value)}`);
+  return lines.join("\n") + "\n";
+}
+
+function codexToml(record) {
+  const table = `mcp_servers.${tomlKey(record.name)}`;
+  const top = {};
   if (record.transport === "stdio") {
-    for (const [key, value] of Object.entries(record.env)) args.push("--env", `${key}=${value}`);
-    args.push("--", record.command, ...record.args);
-    return args;
+    top.command = record.command;
+    if (record.args.length > 0) top.args = record.args;
+  } else {
+    top.url = record.url;
+    if (record.bearerTokenEnvVar) top.bearer_token_env_var = record.bearerTokenEnvVar;
   }
-  args.push("--url", record.url);
-  // Codex can read the bearer token from the environment. Without this the flag
-  // is dropped, and a Codex-to-Codex round trip silently loses the server auth.
-  if (record.bearerTokenEnvVar) args.push("--bearer-token-env-var", record.bearerTokenEnvVar);
-  return args;
+  Object.assign(top, record.codex.scalars);
+  let text = "\n" + tomlTable(table, top);
+  if (record.transport === "stdio") {
+    text += tomlTable(`${table}.env`, record.env);
+  } else {
+    text += tomlTable(`${table}.http_headers`, record.headers);
+    text += tomlTable(`${table}.env_http_headers`, record.codex.envHttpHeaders);
+  }
+  return text;
 }
 
 function claudeArgs(record) {
@@ -467,17 +536,13 @@ for (const record of sorted) {
   emit("mcp_server", shellQuote(record.name), shellQuote(record.transport), shellQuote(detail), shellQuote(record.source));
   for (const lab of targets) {
     if (lab === "codex") {
-      // `codex mcp add` has no way to write http_headers, and applying a server
-      // replaces it. Installing the URL alone would delete a working entry and
-      // leave one that cannot authenticate, so leave the Codex copy untouched.
-      if (record.transport !== "stdio" && Object.keys(record.headers).length > 0) {
-        note("warn", `${record.name}: its ${Object.keys(record.headers).join(", ")} header cannot be set by \`codex mcp add\`, so the Codex lab's copy is left as it is. Set it by hand in the lab's ~/.codex/config.toml if it is not there already.`);
-        continue;
-      }
       if (record.transport === "sse") {
         note("warn", `${record.name}: declared as SSE; Codex will be given it as a plain URL.`);
       }
-      emit("mcp_apply", "codex", shellQuote(record.name), ...codexArgs(record).map(shellQuote));
+      // base64 keeps the multi-line table on one generated line and intact
+      // through docker's argv.
+      const encoded = Buffer.from(codexToml(record), "utf8").toString("base64");
+      emit("mcp_apply_toml", "codex", shellQuote(record.name), shellQuote(encoded));
     } else {
       emit("mcp_apply", "claude", shellQuote(record.name), ...claudeArgs(record).map(shellQuote));
     }

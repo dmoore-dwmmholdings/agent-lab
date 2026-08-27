@@ -36,6 +36,19 @@ case "${1:-}" in
     shift
     lab_run_home_command codex mcp "$@"
     ;;
+  # Internal, used by `agent-lab mcp import|add`: append a base64-encoded TOML
+  # table for one server to the lab's config.toml and confirm Codex can read
+  # it back. The generator removed any previous definition of the name first.
+  mcp-config)
+    shift
+    [[ "${1:-}" == append && $# -eq 3 ]] || { lab_usage >&2; exit 64; }
+    lab_run_home_command sh -c '
+      set -e
+      mkdir -p "$HOME/.codex"
+      printf "%s" "$2" | base64 -d >>"$HOME/.codex/config.toml"
+      codex mcp get "$1" >/dev/null
+    ' sh "$2" "$3"
+    ;;
   github)
     shift
     lab_github "$@"

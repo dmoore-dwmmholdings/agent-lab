@@ -226,10 +226,13 @@ removed from both labs, so disabling a server on the host takes effect here too.
 Only names the configuration actually disables are removed: a server you added
 by hand with `agent-lab mcp add` is never touched by an import.
 
-Two things do not survive the translation, and `import` warns when it hits them:
-Codex has no equivalent for Claude's per-server `headers`, and Claude is not
-given Codex's `bearer_token_env_var`. A server that authenticates that way needs
-its credential added by hand on the other side.
+Codex servers are written straight into the lab's `~/.codex/config.toml` as a
+TOML table, because `codex mcp add` cannot express `http_headers`, `required`,
+timeouts, or `cwd`. Everything the host's table carries survives, so a server
+that authenticates with an `Authorization` header keeps working in the lab, and
+re-importing after a token rotates replaces the stale one. One thing does not
+cross over: Claude is not given Codex's `bearer_token_env_var`, and `import`
+warns when it hits one.
 
 ### Add one by hand
 
