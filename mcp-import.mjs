@@ -256,7 +256,7 @@ function normalise(name, entry, source, dialect) {
     source,
     dialect,
     env: asStringMap(entry.env),
-    headers: asStringMap(entry.headers),
+    headers: { ...asStringMap(entry.headers), ...asStringMap(entry.http_headers) },
     args: asStringArray(entry.args),
     command: typeof entry.command === "string" ? entry.command : "",
     url: typeof entry.url === "string" ? entry.url : "",
@@ -467,8 +467,12 @@ for (const record of sorted) {
   emit("mcp_server", shellQuote(record.name), shellQuote(record.transport), shellQuote(detail), shellQuote(record.source));
   for (const lab of targets) {
     if (lab === "codex") {
+      // `codex mcp add` has no way to write http_headers, and applying a server
+      // replaces it. Installing the URL alone would delete a working entry and
+      // leave one that cannot authenticate, so leave the Codex copy untouched.
       if (record.transport !== "stdio" && Object.keys(record.headers).length > 0) {
-        note("warn", `${record.name}: Codex gets the URL without the headers ${Object.keys(record.headers).join(", ")}; add them by hand if the server needs them.`);
+        note("warn", `${record.name}: its ${Object.keys(record.headers).join(", ")} header cannot be set by \`codex mcp add\`, so the Codex lab's copy is left as it is. Set it by hand in the lab's ~/.codex/config.toml if it is not there already.`);
+        continue;
       }
       if (record.transport === "sse") {
         note("warn", `${record.name}: declared as SSE; Codex will be given it as a plain URL.`);
